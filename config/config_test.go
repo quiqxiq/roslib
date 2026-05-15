@@ -70,13 +70,15 @@ func TestValidateMissingAddress(t *testing.T) {
 	}
 }
 
-func TestValidateCacheRequiresAddr(t *testing.T) {
+// Cache enabled tanpa ADDR adalah valid (InMemory default). Test ini
+// memverifikasi validation tidak salah-reject use case ini.
+func TestValidateCacheEnabledWithoutAddr(t *testing.T) {
 	cfg := &Config{
 		Router: RouterConfig{Address: "x:8728"},
 		Cache:  CacheConfig{Enabled: true},
 	}
-	if err := cfg.Validate(); err == nil {
-		t.Error("expected error when Cache enabled but Addr empty")
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("InMemory cache should not require ADDR; got %v", err)
 	}
 }
 

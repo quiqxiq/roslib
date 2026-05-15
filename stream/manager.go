@@ -136,6 +136,15 @@ func (m *Manager) Close() {
 	}
 }
 
+// Len mengembalikan jumlah listener aktif. Entry yang sudah selesai natural
+// (router kirim !done) sudah otomatis dihapus, jadi nilai ini akurat untuk
+// monitoring finite-stream cleanup.
+func (m *Manager) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.listeners)
+}
+
 // ──────────────── internal ────────────────
 
 func (m *Manager) attach(conn *routeros.Client, l *listener) error {
@@ -171,9 +180,44 @@ func (m *Manager) consume(l *listener) {
 			l.spec.Handler(decode.Wrap(sen))
 		}
 	}
-	if err := l.reply.Err(); err != nil && m.ctx.Err() == nil {
+	err := l.reply.Err()
+
+	// Manager sedang Close-ing; Close() sudah handle map cleanup + detach.
+	// Skip callback supaya tidak fire saat shutdown.
+	if m.ctx.Err() != nil {
+		return
+	}
+
+	if err != nil {
+		// Connection error / network drop. Biarkan entry di map agar
+		// ReattachAll bisa daftar ulang pasca reconnect.
 		m.log.WithError(err).WithField("listener_id", l.spec.ID).
 			Warn("listener channel closed with error")
+		if l.spec.OnFinish != nil {
+			l.spec.OnFinish(l.spec.ID, err)
+		}
+		return
+	}
+
+	// Natural !done dari router. Hapus entry agar ReattachAll skip.
+	m.finishListener(l)
+	m.log.WithField("listener_id", l.spec.ID).Info("stream finished naturally")
+	if l.spec.OnFinish != nil {
+		l.spec.OnFinish(l.spec.ID, nil)
+	}
+}
+
+// finishListener menghapus listener dari map setelah natural completion.
+// Pakai pointer-equality untuk hindari race kalau caller meng-Unregister
+// lalu Register ulang dengan ID yang sama sebelum consume() exit.
+func (m *Manager) finishListener(l *listener) {
+	m.mu.Lock()
+	if cur, ok := m.listeners[l.spec.ID]; ok && cur == l {
+		delete(m.listeners, l.spec.ID)
+	}
+	m.mu.Unlock()
+	if l.cancel != nil {
+		l.cancel()
 	}
 }
 

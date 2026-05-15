@@ -48,4 +48,9 @@ type Executor interface {
 
 	// Logger untuk log-warn saat strict=false.
 	Logger() *logrus.Entry
+
+	// DeviceID identifier unik device — dipakai untuk scope key cache
+	// di lingkungan multi-router. Single-router cukup kembalikan address
+	// atau string kosong.
+	DeviceID() string
 }

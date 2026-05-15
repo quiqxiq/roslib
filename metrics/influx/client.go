@@ -23,8 +23,11 @@ func NewClient(cfg config.InfluxConfig) (*influxdb3.Client, error) {
 	if !cfg.Enabled {
 		return nil, errors.New("influx: cfg.Enabled is false")
 	}
-	if cfg.Host == "" || cfg.Token == "" || cfg.Database == "" {
-		return nil, errors.New("influx: Host, Token, Database are required")
+	// Token sengaja tidak di-validate di sini: InfluxDB3 Core dev-mode
+	// (--without-auth) menerima request tanpa Authorization header.
+	// Selain itu cfg.Token punya default "" yang aman.
+	if cfg.Host == "" || cfg.Database == "" {
+		return nil, errors.New("influx: Host and Database are required")
 	}
 	return influxdb3.New(influxdb3.ClientConfig{
 		Host:         cfg.Host,

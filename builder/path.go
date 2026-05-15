@@ -12,10 +12,11 @@ import (
 // "/interface/monitor-traffic" (inherent-streaming yang dipakai .Stream()
 // langsung dari sini).
 type PathBuilder struct {
-	exec  Executor
-	path  string
-	pairs []query.Pair
-	args  []string
+	exec     Executor
+	path     string
+	pairs    []query.Pair
+	args     []string
+	onFinish stream.FinishCallback
 }
 
 // New membuat PathBuilder baru. Biasanya dipanggil oleh device.Path().
@@ -41,6 +42,15 @@ func (b *PathBuilder) Arg(word string) *PathBuilder {
 	return b
 }
 
+// OnFinish memasang callback yang dipanggil saat listener Stream() selesai.
+// err == nil untuk natural completion (mis. ping count=5 done), err != nil
+// untuk connection drop. Lihat stream.FinishCallback untuk detail kontrak.
+// Method ini hanya berdampak pada PathBuilder.Stream() (inherent-streaming).
+func (b *PathBuilder) OnFinish(cb stream.FinishCallback) *PathBuilder {
+	b.onFinish = cb
+	return b
+}
+
 // Print memulai chain Print: tambahkan Where/Args lalu Exec / Stream.
 func (b *PathBuilder) Print() *PrintBuilder {
 	return &PrintBuilder{exec: b.exec, path: b.path}
@@ -57,11 +67,12 @@ func (b *PathBuilder) Print() *PrintBuilder {
 // method ini.
 func (b *PathBuilder) Stream(id string, h stream.Handler) error {
 	spec := stream.Spec{
-		ID:      id,
-		Word:    b.path,
-		Args:    b.args,
-		Pairs:   b.pairs,
-		Handler: h,
+		ID:       id,
+		Word:     b.path,
+		Args:     b.args,
+		Pairs:    b.pairs,
+		Handler:  h,
+		OnFinish: b.onFinish,
 	}
 	return b.exec.RegisterStream(spec)
 }
@@ -88,6 +99,7 @@ func (w *withCancelTimeout) Stream(id string, h stream.Handler) error {
 		Args:          w.pb.args,
 		Pairs:         w.pb.pairs,
 		Handler:       h,
+		OnFinish:      w.pb.onFinish,
 		CancelTimeout: w.d,
 	}
 	return w.pb.exec.RegisterStream(spec)

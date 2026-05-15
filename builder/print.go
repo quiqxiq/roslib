@@ -3,6 +3,8 @@ package builder
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"strings"
 	"time"
 
 	"github.com/go-routeros/routeros/v3"
@@ -29,8 +31,42 @@ func (p *PrintBuilder) Detail() *PrintBuilder {
 }
 
 // Stats menambahkan flag "stats" — counter/statistik (mis. di /interface).
+// Catatan: stats sendiri tidak streaming — kombinasikan dengan Interval()
+// kalau ingin update berulang (mis. /queue/simple/print stats interval=1s).
 func (p *PrintBuilder) Stats() *PrintBuilder {
 	p.flags = append(p.flags, "stats")
+	return p
+}
+
+// Bytes menambahkan flag "bytes" — proyeksi counter byte saja.
+// Tidak streaming; kombinasikan dengan Interval() untuk update berulang.
+func (p *PrintBuilder) Bytes() *PrintBuilder {
+	p.flags = append(p.flags, "bytes")
+	return p
+}
+
+// Packets menambahkan flag "packets" — proyeksi counter packet saja.
+// Tidak streaming; kombinasikan dengan Interval().
+func (p *PrintBuilder) Packets() *PrintBuilder {
+	p.flags = append(p.flags, "packets")
+	return p
+}
+
+// Rate menambahkan flag "rate" — bit/byte rate. Tidak streaming;
+// kombinasikan dengan Interval() untuk update berkala.
+func (p *PrintBuilder) Rate() *PrintBuilder {
+	p.flags = append(p.flags, "rate")
+	return p
+}
+
+// Proplist mem-batasi field yang dikembalikan RouterOS, mengirim
+// "proplist=field1,field2,...". Berguna untuk hemat bandwidth pada poll
+// frekuensi tinggi.
+func (p *PrintBuilder) Proplist(fields ...string) *PrintBuilder {
+	if len(fields) == 0 {
+		return p
+	}
+	p.flags = append(p.flags, "proplist="+strings.Join(fields, ","))
 	return p
 }
 
@@ -103,7 +139,7 @@ func (p *PrintBuilder) ExecCached(ctx context.Context, ttl time.Duration) (*Repl
 		return nil, err
 	}
 	c := p.exec.Cache()
-	key := cache.KeyOf(sentence)
+	key := cache.KeyOf(p.exec.DeviceID(), sentence)
 
 	if data, hit, err := c.Get(ctx, key); err == nil && hit {
 		var rep cachedReply
@@ -122,8 +158,15 @@ func (p *PrintBuilder) ExecCached(ctx context.Context, ttl time.Duration) (*Repl
 	if ttl <= 0 {
 		ttl = p.exec.CacheTTL()
 	}
-	if encoded, jerr := json.Marshal(toCached(raw)); jerr == nil {
-		_ = c.Set(ctx, key, encoded, ttl)
+	encoded, jerr := json.Marshal(toCached(raw))
+	if jerr == nil {
+		// Pakai SetForPath kalau cache impl mendukung — ini yang memungkinkan
+		// InvalidatePath(p.path) menghapus entry ini setelahnya.
+		if paw, ok := c.(cache.PathAwareCache); ok {
+			_ = paw.SetForPath(ctx, p.path, key, encoded, ttl)
+		} else {
+			_ = c.Set(ctx, key, encoded, ttl)
+		}
 	}
 	return reply, nil
 }
@@ -162,18 +205,25 @@ func (cr cachedReply) toReply() *Reply {
 
 func copyMap(m map[string]string) map[string]string {
 	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
-// Follow membuat builder mode listen=follow (snapshot + delta).
+// Follow mengembalikan StreamBuilder dengan flag `follow` aktif (event
+// driven: snapshot awal + delta).
 func (p *PrintBuilder) Follow() *StreamBuilder {
-	return &StreamBuilder{p: p, mode: modeFollow}
+	return &StreamBuilder{p: p, follow: true}
 }
 
-// FollowOnly membuat builder mode listen=follow-only (hanya event baru).
+// FollowOnly mengembalikan StreamBuilder dengan flag `follow-only` aktif
+// (hanya event baru, tanpa snapshot).
 func (p *PrintBuilder) FollowOnly() *StreamBuilder {
-	return &StreamBuilder{p: p, mode: modeFollowOnly}
+	return &StreamBuilder{p: p, followOnly: true}
+}
+
+// Interval mengembalikan StreamBuilder dengan flag `interval=<d>` aktif.
+// Dipakai untuk print yang tidak punya event-stream sendiri tapi mendukung
+// polling oleh RouterOS, mis. /queue/simple/print stats interval=1s.
+func (p *PrintBuilder) Interval(d time.Duration) *StreamBuilder {
+	return &StreamBuilder{p: p, interval: d}
 }

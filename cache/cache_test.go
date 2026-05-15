@@ -61,13 +61,36 @@ func TestNoopCache(t *testing.T) {
 }
 
 func TestKeyOfDeterministic(t *testing.T) {
-	k1 := KeyOf([]string{"/ip/address/print", "detail"})
-	k2 := KeyOf([]string{"/ip/address/print", "detail"})
+	k1 := KeyOf("dev1", []string{"/ip/address/print", "detail"})
+	k2 := KeyOf("dev1", []string{"/ip/address/print", "detail"})
 	if k1 != k2 {
 		t.Error("KeyOf should be deterministic")
 	}
-	k3 := KeyOf([]string{"/ip/address/print"})
+	k3 := KeyOf("dev1", []string{"/ip/address/print"})
 	if k1 == k3 {
 		t.Error("KeyOf should differ for different sentences")
+	}
+	// Device scoping: same sentence + different device → different key.
+	k4 := KeyOf("dev2", []string{"/ip/address/print", "detail"})
+	if k1 == k4 {
+		t.Error("KeyOf should differ for different devices")
+	}
+}
+
+func TestPathFromSentence(t *testing.T) {
+	cases := []struct {
+		sentence []string
+		want     string
+	}{
+		{[]string{"/ip/address/print"}, "/ip/address"},
+		{[]string{"/system/resource/print", "detail"}, "/system/resource"},
+		{[]string{"/interface/monitor-traffic", "=interface=ether1"}, "/interface"},
+		{[]string{"/beep"}, "/beep"},
+		{[]string{}, ""},
+	}
+	for _, tc := range cases {
+		if got := PathFromSentence(tc.sentence); got != tc.want {
+			t.Errorf("PathFromSentence(%v) = %q, want %q", tc.sentence, got, tc.want)
+		}
 	}
 }

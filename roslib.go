@@ -16,6 +16,7 @@ package roslib
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	cachepkg "github.com/quiqxiq/roslib/cache"
@@ -125,6 +126,86 @@ func NewFromConfig(parent context.Context, cfg *Config, log *logrus.Logger) (*De
 		}
 	}
 	return dev, influxClient, nil
+}
+
+// NewFleet membangun map[deviceID]*Device dari FleetConfig.
+//
+// Registry, cache, dan influx client di-share antar device — efisien
+// untuk service yang manage banyak router. InfluxClient dikembalikan
+// terpisah supaya caller bisa menutupnya saat shutdown.
+//
+// Jika satu router gagal dial, fleet rollback (close yang sudah dial)
+// dan return error — pendekatan all-or-nothing supaya state konsisten.
+// Caller yang butuh partial-fleet (skip router error) boleh wrap sendiri.
+func NewFleet(parent context.Context, cfg *config.FleetConfig, log *logrus.Logger) (map[string]*Device, *influxdb3.Client, error) {
+	if cfg == nil {
+		return nil, nil, errors.New("roslib: nil fleet config")
+	}
+	if log == nil {
+		return nil, nil, errors.New("roslib: nil logger")
+	}
+	if len(cfg.Routers) == 0 {
+		return nil, nil, errors.New("roslib: fleet has no routers")
+	}
+
+	reg, err := capability.Load(capability.LoadOptions{Path: cfg.RegistryPath})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var sharedCache cachepkg.Cache = cachepkg.NoopCache{}
+	if cfg.Cache.Enabled {
+		sharedCache = cachepkg.NewInMemory()
+	}
+
+	var influxClient *influxdb3.Client
+	if cfg.Influx.Enabled {
+		influxClient, err = influx.NewClient(cfg.Influx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	fleet := make(map[string]*Device, len(cfg.Routers))
+	for _, entry := range cfg.Routers {
+		opts := Options{
+			ID:                       entry.ID,
+			Address:                  entry.Address,
+			Username:                 entry.Username,
+			Password:                 entry.Password,
+			Logger:                   log,
+			ListenQueueSize:          entry.ListenQueueSize,
+			DialTimeout:              entry.DialTimeout,
+			ReconnectInitialInterval: entry.ReconnectInitialInterval,
+			ReconnectMaxInterval:     entry.ReconnectMaxInterval,
+			ReconnectMaxElapsed:      entry.ReconnectMaxElapsed,
+			Registry:                 reg,
+			Cache:                    sharedCache,
+			CacheTTL:                 cfg.Cache.DefaultTTL,
+			StrictCapability:         cfg.StrictCapability,
+		}
+		dev, derr := device.New(parent, opts)
+		if derr != nil {
+			CloseAll(fleet)
+			if influxClient != nil {
+				_ = influxClient.Close()
+			}
+			return nil, nil, fmt.Errorf("dial router %q: %w", entry.ID, derr)
+		}
+		fleet[entry.ID] = dev
+	}
+
+	return fleet, influxClient, nil
+}
+
+// CloseAll loop semua device di fleet dan panggil Close. Aman dipanggil
+// dengan map nil atau kosong.
+func CloseAll(fleet map[string]*Device) {
+	for _, dev := range fleet {
+		if dev != nil {
+			_ = dev.Close()
+		}
+	}
 }
 
 // NewPair adalah helper konstruktor Pair.

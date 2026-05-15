@@ -1,8 +1,16 @@
 // Demo inherently-streaming commands (monitor-traffic, ping, torch,
-// sniffer, .../monitor). Tidak benar-benar konek ke router — semata
-// memastikan API kompilasi. Build:
+// sniffer, .../monitor). Build:
 //
 //	go build -tags=example ./examples/streaming
+//
+// Cara menjalankan — set env lalu run:
+//
+//	export ROSLIB_ROUTER_ADDRESS=192.168.88.1:8728
+//	export ROSLIB_ROUTER_USERNAME=admin
+//	export ROSLIB_ROUTER_PASSWORD=secret
+//	go run -tags=example ./examples/streaming
+//
+// Atau edit langsung field Address/Username/Password di bawah.
 //
 //go:build example
 
@@ -22,9 +30,9 @@ func main() {
 	ctx := context.Background()
 
 	dev, err := roslib.New(ctx, roslib.Options{
-		Address:          "192.168.88.1:8728",
+		Address:          "192.168.230.2:8728",
 		Username:         "admin",
-		Password:         "secret",
+		Password:         "r00t",
 		Logger:           logger,
 		StrictCapability: true,
 	})
@@ -46,18 +54,18 @@ func main() {
 	}
 
 	// /tool/ping — ICMP echo dengan count terbatas, lalu listener selesai.
-	if err := dev.Path("/tool/ping").
-		With("address", "8.8.8.8").
-		With("count", "5").
-		Stream("ping-8888", func(s *roslib.Sentence) {
-			logger.WithFields(logrus.Fields{
-				"seq":  s.Get("seq"),
-				"time": s.Get("time"),
-				"ttl":  s.Get("ttl"),
-			}).Info("ping")
-		}); err != nil {
-		log.Printf("ping register: %v", err)
-	}
+	// if err := dev.Path("/tool/ping").
+	// 	With("address", "8.8.8.8").
+	// 	With("count", "5").
+	// 	Stream("ping-8888", func(s *roslib.Sentence) {
+	// 		logger.WithFields(logrus.Fields{
+	// 			"seq":  s.Get("seq"),
+	// 			"time": s.Get("time"),
+	// 			"ttl":  s.Get("ttl"),
+	// 		}).Info("ping")
+	// 	}); err != nil {
+	// 	log.Printf("ping register: %v", err)
+	// }
 
 	// /interface/ethernet/monitor — interface fisik (link rate, auto-negotiation).
 	if err := dev.Path("/interface/ethernet/monitor").
@@ -79,11 +87,26 @@ func main() {
 		log.Printf("torch register: %v", err)
 	}
 
+	// /system/resource/monitor — CPU, memory, uptime secara real-time.
+	// Action "monitor" → ClassStreaming, pakai .Stream() langsung dari PathBuilder.
+	// Interval default RouterOS = 1 detik. Override via With("interval", "2").
+	if err := dev.Path("/system/resource/monitor").
+		Stream("sys-resource-monitor", func(s *roslib.Sentence) {
+			logger.WithFields(logrus.Fields{
+				"cpu-load":    s.Get("cpu-load"),
+				"free-memory": s.Get("free-memory"),
+				"uptime":      s.Get("uptime"),
+			}).Info("system resource")
+		}); err != nil {
+		log.Printf("system resource monitor register: %v", err)
+	}
+
 	// Misuse demo (strict mode): .Exec() di path streaming → error.
 	if _, err := dev.Path("/interface/monitor-traffic").Print().Exec(ctx); err != nil {
 		logger.WithError(err).Info("strict validator caught misuse (expected)")
 	}
 
-	time.Sleep(30 * time.Second)
+	time.Sleep(300 * time.Second)
 	dev.UnregisterStream("nic-ether1")
+	dev.UnregisterStream("sys-resource-monitor")
 }

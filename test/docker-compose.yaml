@@ -3,12 +3,12 @@ services:
     image: quay.io/influxdb/influxdb3-core:latest
     container_name: roslib-influx
     command:
-      - influxdb3
       - serve
       - --node-id=node0
       - --object-store=file
       - --data-dir=/var/lib/influxdb3
       - --http-bind=0.0.0.0:8181
+      - --without-auth
     ports:
       - "8181:8181"
     volumes:

@@ -148,6 +148,35 @@ func (d *RouterDevice) CacheTTL() time.Duration { return d.opts.CacheTTL }
 // Strict melaporkan apakah validator dalam strict mode (error vs log-warn).
 func (d *RouterDevice) Strict() bool { return d.opts.StrictCapability }
 
+// DeviceID identifier device untuk scope cache.
+// Pakai Options.ID kalau di-set, fallback ke Address.
+func (d *RouterDevice) DeviceID() string {
+	if d.opts.ID != "" {
+		return d.opts.ID
+	}
+	return d.opts.Address
+}
+
+// InvalidateCache menghapus seluruh entry cache yang ter-asosiasi dengan
+// path RouterOS tertentu pada device ini. Aman dipanggil bila cache adalah
+// NoopCache (no-op).
+//
+// Gunakan ini setelah mutation eksternal (mis. operator edit di WinBox)
+// atau setelah mutation panggilan library yang menurut user invalidasi
+// dibutuhkan — library TIDAK auto-invalidate (per design).
+func (d *RouterDevice) InvalidateCache(ctx context.Context, path string) error {
+	if d.opts.Cache == nil {
+		return nil
+	}
+	// Fleet mode dengan shared cache: pakai scoped invalidate supaya tidak
+	// nge-bust entry milik device lain. Fall back ke global invalidate kalau
+	// implementasi cache tidak support scoping.
+	if scoped, ok := d.opts.Cache.(cache.DeviceScopedCache); ok {
+		return scoped.InvalidatePathForDevice(ctx, d.DeviceID(), path)
+	}
+	return d.opts.Cache.InvalidatePath(ctx, path)
+}
+
 // Streams mengembalikan StreamManager untuk operasi listener.
 func (d *RouterDevice) Streams() *stream.Manager { return d.streams }
 

@@ -105,19 +105,20 @@ func LoadFromEnv() (*Config, error) {
 }
 
 // Validate cek precondition minimal.
+//
+// Catatan: ROSLIB_CACHE_ADDR hanya wajib kalau implementasi Redis dipakai
+// (build-tag `redis`). Default InMemoryCache tidak butuh ADDR — caller
+// tetap bisa enable cache tanpa set ADDR.
+//
+// Untuk Influx, TOKEN opsional supaya kompatibel dengan InfluxDB3 Core
+// dev-mode (`--without-auth`). HOST + DATABASE tetap wajib.
 func (c *Config) Validate() error {
 	if c.Router.Address == "" {
 		return errors.New("config: ROSLIB_ROUTER_ADDRESS is required")
 	}
-	if c.Cache.Enabled && c.Cache.Addr == "" {
-		return errors.New("config: ROSLIB_CACHE_ADDR required when ROSLIB_CACHE_ENABLED=true")
-	}
 	if c.Influx.Enabled {
 		if c.Influx.Host == "" {
 			return errors.New("config: INFLUX_HOST required when ROSLIB_INFLUX_ENABLED=true")
-		}
-		if c.Influx.Token == "" {
-			return errors.New("config: INFLUX_TOKEN required when ROSLIB_INFLUX_ENABLED=true")
 		}
 		if c.Influx.Database == "" {
 			return errors.New("config: INFLUX_DATABASE required when ROSLIB_INFLUX_ENABLED=true")

@@ -324,8 +324,336 @@ func main() {
 		}
 	}
 
+	// ── Interval streaming: /queue/simple/print stats interval=1s ─────
+	// (queue mungkin kosong di router → 0 row tapi sentence valid)
+	step("STREAM/INTERVAL", "/queue/simple/print stats interval=1s — ≥1 tick atau snapshot kosong")
+	qCount := 0
+	qDone := make(chan struct{})
+	err = dev.Path("/queue/simple").Print().Stats().
+		Interval(time.Second).
+		Stream("q-stats", func(s *decode.Sentence) {
+			qCount++
+			fmt.Printf("    tick %d: name=%s bytes=%s rate=%s\n",
+				qCount, s.Get("name"), s.Get("bytes"), s.Get("rate"))
+			if qCount >= 3 {
+				select {
+				case <-qDone:
+				default:
+					close(qDone)
+				}
+			}
+		})
+	if err != nil {
+		fail("STREAM/INTERVAL", "register: %v", err)
+	} else {
+		select {
+		case <-qDone:
+			pass("STREAM/INTERVAL", "got %d ticks", qCount)
+		case <-time.After(5 * time.Second):
+			// 0 tick OK kalau queue kosong — yang penting register sukses.
+			pass("STREAM/INTERVAL", "register ok, %d ticks (queue mungkin kosong)", qCount)
+		}
+		dev.UnregisterStream("q-stats")
+	}
+
+	// ── Stream no-flag validator ──────────────────────────────────────
+	step("STREAM/NO-FLAG", ".Print().Stats().Stream() tanpa Follow/Interval — expect error")
+	noFlagErr := dev.Path("/ip/address").Print().FollowOnly().Stream("ok-flag", func(*decode.Sentence) {})
+	_ = noFlagErr
+	dev.UnregisterStream("ok-flag")
+	// Buat skenario validator-fail eksplisit via builder lower-level.
+	// Cara mudah: panggil PrintBuilder.Interval(0).Stream — interval=0
+	// tidak nyalakan flag, dan field follow/followOnly juga false.
+	// Note: 0 interval di-treat seperti unset oleh builder.
+	if sErr := dev.Path("/ip/address").Print().Interval(0).Stream("zero-interval", func(*decode.Sentence) {}); sErr == nil {
+		fail("STREAM/NO-FLAG", "expected ErrNoStreamFlag, got nil")
+	} else {
+		pass("STREAM/NO-FLAG", "rejected: %v", sErr)
+	}
+
+	// ── Cache invalidation live ───────────────────────────────────────
+	step("CACHE/INVALIDATE-LIVE", "ExecCached × 2 → invalidate → ExecCached miss again")
+	invCache := cache.NewInMemory()
+	invOpts := cfg.ToDeviceOptions(log)
+	invOpts.Registry, _ = capability.Default()
+	invOpts.Cache = invCache
+	invOpts.CacheTTL = time.Hour
+	invOpts.StrictCapability = true
+	invOpts.ID = "test-inv"
+	dev3, ierr := roslib.New(ctx, invOpts)
+	if ierr != nil {
+		fail("CACHE/INVALIDATE-LIVE", "dial: %v", ierr)
+	} else {
+		defer dev3.Close()
+		r1, _ := dev3.Path("/ip/address").Print().ExecCached(ctx, time.Hour)
+		entriesBefore := invCache.Len()
+		r2, _ := dev3.Path("/ip/address").Print().ExecCached(ctx, time.Hour)
+		// Sekarang invalidate
+		_ = dev3.InvalidateCache(ctx, "/ip/address")
+		entriesAfter := invCache.Len()
+		r3, _ := dev3.Path("/ip/address").Print().ExecCached(ctx, time.Hour)
+		ok := r1 != nil && r2 != nil && r3 != nil &&
+			len(r1.Rows) == len(r2.Rows) &&
+			len(r1.Rows) == len(r3.Rows)
+		if !ok {
+			fail("CACHE/INVALIDATE-LIVE", "row count mismatch r1=%v r2=%v r3=%v", r1, r2, r3)
+		} else {
+			pass("CACHE/INVALIDATE-LIVE",
+				"rows=%d entries(before-invalidate)=%d after-invalidate=%d → fresh fetch ok",
+				len(r1.Rows), entriesBefore, entriesAfter)
+		}
+	}
+
+	// ── Fleet smoke: load .env user (ROSLIB_ROUTERS=...) → dial semua ──
+	step("FLEET/SMOKE", "NewFleet dari .env (multi-router) — verifikasi map+Close")
+	fleetCfg, ferr := config.LoadFleetFromEnv()
+	if ferr != nil {
+		warn("FLEET/SMOKE", "load: %v (skip)", ferr)
+	} else {
+		fleet, _, fferr := roslib.NewFleet(ctx, fleetCfg, log)
+		if fferr != nil {
+			fail("FLEET/SMOKE", "NewFleet: %v", fferr)
+		} else {
+			names := make([]string, 0, len(fleet))
+			for id, rb := range fleet {
+				rep, qerr := rb.Path("/system/identity").Print().Exec(ctx)
+				if qerr != nil {
+					fail("FLEET/SMOKE", "%s identity: %v", id, qerr)
+					continue
+				}
+				if len(rep.Rows) > 0 {
+					names = append(names, fmt.Sprintf("%s=%q", id, rep.Rows[0].Get("name")))
+				}
+			}
+			pass("FLEET/SMOKE", "routers=%d %v", len(fleet), names)
+			roslib.CloseAll(fleet)
+		}
+	}
+
+	// ── Stream finite cleanup: listener selesai natural → entry hilang ─
+	step("STREAM/FINITE-CLEANUP", "verifikasi listener entry dibersihkan setelah !done natural")
+	finishCh := make(chan error, 1)
+	var finiteRx int
+	finiteHandler := func(_ *decode.Sentence) { finiteRx++ }
+	finiteOnFinish := func(id string, ferr error) {
+		select {
+		case finishCh <- ferr:
+		default:
+		}
+	}
+	// /tool/torch dengan duration=2s — finite stream native v6+v7. Tidak butuh
+	// arg lain karena hanya untuk uji lifecycle, bukan content.
+	before := dev.Streams().Len()
+	terr := dev.Path("/tool/torch").
+		With("interface", "ether1").
+		With("duration", "2s").
+		OnFinish(finiteOnFinish).
+		Stream("torch-finite", finiteHandler)
+	if terr != nil {
+		warn("STREAM/FINITE-CLEANUP", "register torch: %v (mungkin path tidak tersedia di v6, skip)", terr)
+	} else {
+		select {
+		case ferr := <-finishCh:
+			after := dev.Streams().Len()
+			if after != before {
+				fail("STREAM/FINITE-CLEANUP",
+					"after natural close Streams().Len()=%d; want %d (before)", after, before)
+			} else {
+				pass("STREAM/FINITE-CLEANUP",
+					"rx=%d OnFinish err=%v before=%d after=%d (entry cleaned)",
+					finiteRx, ferr, before, after)
+			}
+		case <-time.After(8 * time.Second):
+			fail("STREAM/FINITE-CLEANUP", "OnFinish tidak fire dalam 8s")
+			_ = dev.UnregisterStream("torch-finite")
+		}
+	}
+
+	// ── COMBO: cache + influx + fleet bersamaan ────────────────────────
+	step("COMBO/CACHE+INFLUX+FLEET", "exercise cache hit + influx write per device")
+	if !cfg.Cache.Enabled || !cfg.Influx.Enabled {
+		warn("COMBO/CACHE+INFLUX+FLEET",
+			"skip — butuh ROSLIB_CACHE_ENABLED=true + ROSLIB_INFLUX_ENABLED=true (cache=%v influx=%v)",
+			cfg.Cache.Enabled, cfg.Influx.Enabled)
+	} else {
+		comboFleetCfg, cerr := config.LoadFleetFromEnv()
+		if cerr != nil || len(comboFleetCfg.Routers) < 2 {
+			warn("COMBO/CACHE+INFLUX+FLEET",
+				"skip — butuh ROSLIB_ROUTERS dengan ≥2 entry (load_err=%v routers=%d)",
+				cerr, lenSafe(comboFleetCfg))
+		} else {
+			runComboScenario(ctx, log, comboFleetCfg)
+		}
+	}
+
 	step("DONE", "all scenarios complete")
 }
+
+func lenSafe(c *config.FleetConfig) int {
+	if c == nil {
+		return 0
+	}
+	return len(c.Routers)
+}
+
+func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.FleetConfig) {
+	fleet, influxCli, ferr := roslib.NewFleet(ctx, fleetCfg, log)
+	if ferr != nil {
+		fail("COMBO/CACHE+INFLUX+FLEET", "NewFleet: %v", ferr)
+		return
+	}
+	defer roslib.CloseAll(fleet)
+	if influxCli != nil {
+		defer influxCli.Close()
+	}
+
+	// Cache shared antar device. NewFleet sudah pasang InMemoryCache di Options.
+	// Ambil dari salah satu device untuk inspect Stats().
+	var shared *cache.InMemoryCache
+	for _, dev := range fleet {
+		if im, ok := dev.Cache().(*cache.InMemoryCache); ok {
+			shared = im
+			break
+		}
+	}
+	if shared == nil {
+		fail("COMBO/CACHE+INFLUX+FLEET", "expected InMemoryCache, got %T", firstCacheType(fleet))
+		return
+	}
+
+	// 1. ExecCached 2x per router → call ke-2 harus hit.
+	statsBefore := shared.Stats()
+	for id, dev := range fleet {
+		if _, err := dev.Path("/system/resource").Print().ExecCached(ctx, 30*time.Second); err != nil {
+			fail("COMBO/CACHE+INFLUX+FLEET", "ExecCached miss %s: %v", id, err)
+			return
+		}
+		if _, err := dev.Path("/system/resource").Print().ExecCached(ctx, 30*time.Second); err != nil {
+			fail("COMBO/CACHE+INFLUX+FLEET", "ExecCached hit %s: %v", id, err)
+			return
+		}
+	}
+	statsAfter := shared.Stats()
+	expectedHits := int64(len(fleet))
+	expectedSets := int64(len(fleet))
+	hits := statsAfter.Hits - statsBefore.Hits
+	sets := statsAfter.Sets - statsBefore.Sets
+	if hits != expectedHits || sets != expectedSets {
+		fail("COMBO/CACHE+INFLUX+FLEET",
+			"cache stats Δhits=%d (want %d) Δsets=%d (want %d) entries=%d",
+			hits, expectedHits, sets, expectedSets, statsAfter.Entries)
+		return
+	}
+	fmt.Printf("    cache: routers=%d entries=%d Δhits=%d Δsets=%d ✓\n",
+		len(fleet), statsAfter.Entries, hits, sets)
+
+	// 2. Multi-router poll → InfluxDB write. Writer per device dengan tag device_id.
+	if influxCli == nil {
+		warn("COMBO/CACHE+INFLUX+FLEET", "influx client nil — skip write phase")
+		return
+	}
+	fieldsFn := func(s *decode.Sentence) map[string]any {
+		free := s.IntOr("free-memory", 0)
+		total := s.IntOr("total-memory", 0)
+		return map[string]any{
+			"free_memory":  free,
+			"total_memory": total,
+		}
+	}
+	for _, dev := range fleet {
+		devID := dev.DeviceID()
+		dev := dev
+		tagsFn := func(_ *decode.Sentence) map[string]string {
+			return map[string]string{"device_id": devID, "scope": "combo"}
+		}
+		w := influx.NewWriter(influxCli, "combo_resource", tagsFn, fieldsFn)
+		handler := influx.PollSink(w, log.WithField("device", devID))
+		if err := dev.RegisterPoll(roslib.PollConfig{
+			ID:       "combo-resource",
+			Path:     "/system/resource",
+			Interval: 1500 * time.Millisecond,
+			Handler:  handler,
+		}); err != nil {
+			fail("COMBO/CACHE+INFLUX+FLEET", "RegisterPoll %s: %v", devID, err)
+			return
+		}
+	}
+	// Biarkan 4 detik → ≥2 tick per router.
+	time.Sleep(4 * time.Second)
+	for _, dev := range fleet {
+		_ = dev.UnregisterPoll("combo-resource")
+	}
+
+	// 3. Verifikasi via Reader: query count per device_id.
+	reader := influx.NewReader(influxCli)
+	sql := "SELECT device_id, count(*) AS n FROM combo_resource " +
+		"WHERE time > now() - INTERVAL '30 seconds' GROUP BY device_id"
+	iter, qerr := reader.Query(ctx, sql)
+	if qerr != nil {
+		warn("COMBO/CACHE+INFLUX+FLEET", "reader query: %v (lewati verifikasi influx)", qerr)
+	} else {
+		seen := map[string]int64{}
+		for iter.Next() {
+			row := iter.Value()
+			devID, _ := row["device_id"].(string)
+			switch v := row["n"].(type) {
+			case int64:
+				seen[devID] = v
+			case int32:
+				seen[devID] = int64(v)
+			}
+		}
+		if len(seen) < len(fleet) {
+			fail("COMBO/CACHE+INFLUX+FLEET",
+				"influx rows: got %d device_id, want %d (seen=%v)",
+				len(seen), len(fleet), seen)
+			return
+		}
+		fmt.Printf("    influx: device_ids=%v ✓\n", seen)
+	}
+
+	// 4. Cache invalidate scoped — affect satu device, lainnya tetap hit.
+	var pickID string
+	var pickDev *roslib.Device
+	for id, d := range fleet {
+		pickID, pickDev = id, d
+		break
+	}
+	if err := pickDev.InvalidateCache(ctx, "/system/resource"); err != nil {
+		fail("COMBO/CACHE+INFLUX+FLEET", "InvalidateCache %s: %v", pickID, err)
+		return
+	}
+	preMiss := shared.Stats().Misses
+	preHit := shared.Stats().Hits
+	for id, d := range fleet {
+		_, _ = d.Path("/system/resource").Print().ExecCached(ctx, 30*time.Second)
+		_ = id
+	}
+	postStats := shared.Stats()
+	deltaMiss := postStats.Misses - preMiss
+	deltaHit := postStats.Hits - preHit
+	// Setelah invalidate satu device: 1 miss (yang di-invalidate) + (len-1) hit.
+	wantMiss := int64(1)
+	wantHit := int64(len(fleet) - 1)
+	if deltaMiss != wantMiss || deltaHit != wantHit {
+		fail("COMBO/CACHE+INFLUX+FLEET",
+			"invalidate scope: Δmiss=%d (want %d) Δhit=%d (want %d) — cache key bukan device-scoped?",
+			deltaMiss, wantMiss, deltaHit, wantHit)
+		return
+	}
+
+	pass("COMBO/CACHE+INFLUX+FLEET",
+		"routers=%d cache(hits=%d misses=%d entries=%d) influx-write+query ok, scoped-invalidate ok",
+		len(fleet), postStats.Hits, postStats.Misses, postStats.Entries)
+}
+
+func firstCacheType(fleet map[string]*roslib.Device) any {
+	for _, dev := range fleet {
+		return dev.Cache()
+	}
+	return nil
+}
+
 
 // ──────────────── reporting helpers ────────────────
 

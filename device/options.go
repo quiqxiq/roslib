@@ -27,6 +27,11 @@ import (
 //
 //	(retry selamanya sampai context cancel).
 type Options struct {
+	// ID adalah identifier logis device (mis. "rb1", "office-gateway").
+	// Dipakai sebagai cache key prefix di lingkungan multi-router.
+	// Kosong → otomatis pakai Address.
+	ID string
+
 	Address  string
 	Username string
 	Password string

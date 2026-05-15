@@ -16,6 +16,15 @@ import (
 // Dipanggil di goroutine internal — handler harus return cepat.
 type Handler func(*decode.Sentence)
 
+// FinishCallback dipanggil ketika listener berakhir.
+//   - err == nil → natural completion (router kirim !done, mis. ping count=5 selesai).
+//     Entry sudah dihapus dari Manager.listeners.
+//   - err != nil → connection error / network drop. Entry tetap di map agar
+//     ReattachAll bisa daftar ulang pasca reconnect.
+//
+// Callback dipanggil di goroutine internal — harus return cepat.
+type FinishCallback func(id string, err error)
+
 // Spec adalah blueprint listener — bukan instance live. Spec disimpan oleh
 // Manager untuk keperluan re-attach pasca reconnect.
 //
@@ -33,6 +42,9 @@ type Spec struct {
 	Pairs   []query.Pair
 	Where   []query.WherePair
 	Handler Handler
+
+	// OnFinish opsional — dipanggil saat listener selesai (natural !done atau error).
+	OnFinish FinishCallback
 
 	// QueueSize override Client.Queue default. 0 = pakai default dari client.
 	QueueSize int

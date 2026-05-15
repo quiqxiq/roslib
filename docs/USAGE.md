@@ -6,13 +6,16 @@ Dokumentasi penggunaan per fitur. Bukan API reference (lihat `go doc github.com/
 
 - [Instalasi & koneksi pertama](#instalasi--koneksi-pertama)
 - [Loading konfigurasi](#loading-konfigurasi)
+- [Multi-router (fleet)](#multi-router-fleet)
 - [Snapshot query (Print Exec)](#snapshot-query-print-exec)
 - [Mutation: add, set, remove, enable, disable](#mutation-add-set-remove-enable-disable)
 - [Streaming (Listener)](#streaming-listener)
   - [Print-follow (log, table-snapshot + delta)](#print-follow-log-table-snapshot--delta)
+  - [Print + Interval (queue counter, interface stats)](#print--interval-queue-counter-interface-stats)
   - [Inherent streaming (monitor-traffic, ping, torch, sniffer)](#inherent-streaming-monitor-traffic-ping-torch-sniffer)
 - [Polling terjadwal](#polling-terjadwal)
 - [Cache (InMemory / Redis)](#cache-inmemory--redis)
+- [Cache invalidation](#cache-invalidation)
 - [Sink ke InfluxDB3](#sink-ke-influxdb3)
 - [Capability validator: strict vs warn vs override](#capability-validator-strict-vs-warn-vs-override)
 - [Auto-reconnect & lifecycle](#auto-reconnect--lifecycle)
@@ -90,6 +93,67 @@ Env yang dibaca (lihat `.env.example`):
 | `ROSLIB_INFLUX_MEASUREMENT` | `roslib` | default measurement name |
 
 Pakai `godotenv` di app `main()` kalau butuh `.env` file (library tidak parsing `.env` sendiri).
+
+---
+
+## Multi-router (fleet)
+
+Library menyediakan helper minimal: tidak ada package `fleet/`, hanya `map[string]*Device` + loader env multi-router + helper close massal.
+
+### Env scheme
+
+```bash
+ROSLIB_ROUTERS=rb1,rb2,office-gw          # comma-separated ID list
+ROSLIB_ROUTER_RB1_ADDRESS=192.168.88.1:8728
+ROSLIB_ROUTER_RB1_USERNAME=admin
+ROSLIB_ROUTER_RB1_PASSWORD=secret
+ROSLIB_ROUTER_RB2_ADDRESS=192.168.88.2:8728
+ROSLIB_ROUTER_RB2_USERNAME=admin
+ROSLIB_ROUTER_RB2_PASSWORD=secret
+ROSLIB_ROUTER_OFFICE_GW_ADDRESS=10.0.0.1:8728   # "office-gw" → OFFICE_GW di env name
+ROSLIB_ROUTER_OFFICE_GW_USERNAME=admin
+ROSLIB_ROUTER_OFFICE_GW_PASSWORD=secret
+
+# Cache/Influx/strict toggle tetap shared (lihat single-router env).
+```
+
+ID dash di-translate ke underscore di nama env: `office-gw` → `ROSLIB_ROUTER_OFFICE_GW_*`.
+
+### Konstruksi
+
+```go
+import "github.com/quiqxiq/roslib/config"
+
+fleetCfg, _ := config.LoadFleetFromEnv()
+fleet, influxCli, _ := roslib.NewFleet(ctx, fleetCfg, logger)
+defer roslib.CloseAll(fleet)
+if influxCli != nil { defer influxCli.Close() }
+
+// Akses per ID
+rb1 := fleet["rb1"]
+reply, _ := rb1.Path("/ip/address").Print().Exec(ctx)
+
+// Fan-out manual
+for id, dev := range fleet {
+    go func(id string, d *roslib.Device) {
+        rep, _ := d.Path("/system/resource").Print().Exec(ctx)
+        log.Printf("[%s] uptime=%s", id, rep.Rows[0].Get("uptime"))
+    }(id, dev)
+}
+```
+
+### Cache + multi-router
+
+Cache instance dibagi antar router (kalau enabled). Key cache otomatis di-prefix dengan device ID, jadi sentence yang sama dari dua router tidak konflik. Pemeriksaan ada di `TestExecCachedDeviceScoping`.
+
+```text
+roslib:rb1:<hash>   ← cache untuk rb1
+roslib:rb2:<hash>   ← cache untuk rb2, isi bisa berbeda
+```
+
+### Atomic dial
+
+`NewFleet` dial semua router sekuensial. Kalau satu gagal, semua yang sudah berhasil di-close (rollback) dan return error. Caller yang butuh "best-effort" (skip router yang gagal) boleh loop manual `device.New` sendiri.
 
 ---
 
@@ -207,6 +271,47 @@ dev.Path("/log").Print().FollowOnly().
     Stream("log-tail", handler)
 ```
 
+### Print + Interval (queue counter, interface stats)
+
+Beberapa `print` tidak punya event-stream sendiri tapi mendukung polling via `interval=<d>`. Pola tipikal: `/queue/simple/print stats interval=1s`, `/interface/print stats interval=2s`.
+
+```go
+// Counter per queue, update tiap 1 detik.
+dev.Path("/queue/simple").Print().Stats().
+    Interval(1 * time.Second).
+    Stream("q-stats", func(s *roslib.Sentence) {
+        logger.WithFields(logrus.Fields{
+            "name":  s.Get("name"),
+            "bytes": s.Get("bytes"),
+            "rate":  s.Get("rate"),
+        }).Info("queue")
+    })
+
+// Counter interface dengan rate, update tiap 2 detik.
+dev.Path("/interface").Print().Stats().Rate().
+    Interval(2 * time.Second).
+    Stream("nic-stats", handler)
+
+// Bisa dikombinasi dengan Follow / FollowOnly (event-driven + keep-alive poll).
+dev.Path("/ip/firewall/filter").Print().
+    Follow().Interval(2 * time.Second).
+    Stream("fw-flow", handler)
+```
+
+**Validator**: `.Stream()` tanpa salah satu dari `Follow()`/`FollowOnly()`/`Interval()` akan return `ErrNoStreamFlag` — listener tanpa flag streaming akan langsung close oleh RouterOS.
+
+Helper flag print yang umum dipakai dengan Interval:
+
+| Method | Flag |
+|---|---|
+| `.Stats()` | `stats` — counter byte/packet |
+| `.Bytes()` | `bytes` — counter byte saja |
+| `.Packets()` | `packets` — counter packet saja |
+| `.Rate()` | `rate` — bit/byte rate per detik |
+| `.Detail()` | `detail` — semua field |
+| `.Proplist("f1","f2")` | `proplist=f1,f2` — projection |
+| `.Count()` | `count-only` — jumlah row saja |
+
 ### Inherent streaming (monitor-traffic, ping, torch, sniffer)
 
 Untuk command yang **selalu** streaming tanpa butuh kata `follow` (50+ path: `/interface/monitor-traffic`, `/tool/ping`, `/tool/torch`, `/tool/sniffer/*`, `/interface/**/monitor`, …):
@@ -248,6 +353,46 @@ dev.UnregisterStream("nic-1")
 ```
 
 Listener berbagi **satu** connStream lewat tag demux. Reconnect otomatis akan `ReattachAll` seluruh listener.
+
+### Finite-stream auto-cleanup + `OnFinish`
+
+Command dengan batas finite (mis. `/tool/ping count=5`, `/tool/torch duration=2s`) akan kirim `!done` saat selesai. Sejak iterasi-3, library:
+
+1. **Auto-clean** entry dari `Manager.listeners` saat natural close — `ReattachAll` pasca reconnect tidak lagi re-attach listener yang sudah selesai.
+2. **Tetap simpan** entry kalau channel close karena connection error (Err != nil) — supaya `ReattachAll` bisa daftar ulang.
+
+Pasang callback `OnFinish` untuk tahu kapan listener selesai (natural atau error):
+
+```go
+done := make(chan error, 1)
+dev.Path("/tool/ping").
+    With("address", "8.8.8.8").
+    With("count", "5").
+    OnFinish(func(id string, err error) {
+        // err == nil → natural !done dari router (entry sudah dihapus)
+        // err != nil → connection drop (entry tetap, ReattachAll akan handle)
+        done <- err
+    }).
+    Stream("ping-finite", handler)
+
+if err := <-done; err == nil {
+    fmt.Println("ping selesai natural")
+}
+```
+
+Cek jumlah listener aktif:
+
+```go
+fmt.Println("active listeners:", dev.Streams().Len())
+```
+
+`OnFinish` juga tersedia di chain `Print().Follow()/FollowOnly()/Interval()`:
+
+```go
+dev.Path("/log").Print().Follow().
+    OnFinish(func(id string, err error) { /* ... */ }).
+    Stream("log-follow", handler)
+```
 
 ---
 
@@ -325,6 +470,53 @@ Key kanonik:
 key := cache.KeyOf([]string{"/ip/address/print"})
 // → "roslib:5b3c..." (sha256 hex)
 ```
+
+## Cache invalidation
+
+Library **tidak** auto-invalidate setelah mutation (per design — predictable & explicit). User panggil manual saat tahu state berubah.
+
+### Single device
+
+```go
+// Setelah panggilan mutation library:
+_, _ = dev.Path("/ip/address").Add(ctx, roslib.NewPair("address", "10.0.0.1/24"))
+_ = dev.InvalidateCache(ctx, "/ip/address")
+
+// Atau setelah perubahan eksternal (WinBox, SSH, operator lain):
+_ = dev.InvalidateCache(ctx, "/ip/address")
+reply, _ := dev.Path("/ip/address").Print().ExecCached(ctx, 30*time.Second) // fresh
+```
+
+### Lewat cache instance langsung
+
+```go
+import "context"
+
+_ = sharedCache.InvalidatePath(context.Background(), "/ip/address")
+```
+
+### Yang dijamin
+
+- Entry yang di-Set lewat **`ExecCached`** ter-track ke `pathIdx` dan dihapus oleh `InvalidatePath(path)`.
+- Entry yang di-Set lewat `Set` biasa **tidak ter-track** dan tidak ikut hilang (sengaja — escape hatch).
+- `NoopCache.InvalidatePath` no-op.
+- Path tidak ada di cache → `InvalidatePath` no-op (idempotent).
+
+### Test konsistensi yang ada
+
+| Test | Lokasi |
+|---|---|
+| `TestInvalidatePath_InMemory` | Set → Invalidate → Miss |
+| `TestInvalidatePath_Partial` | Invalidate satu path, path lain tetap |
+| `TestInvalidatePath_NotFound` | Idempotent untuk path absent |
+| `TestInvalidatePath_AfterExpiry` | Tidak bocor reference saat TTL expire |
+| `TestConcurrentSetInvalidate` | Race detector clean |
+| `TestSetWithoutPath` | Set tanpa path tidak ter-affect |
+| `TestExecCachedInvalidate` | ExecCached × 2 → invalidate → miss lagi |
+| `TestExecCachedDeviceScoping` | Cache dipisah per device di fleet |
+| Live `CACHE/INVALIDATE-LIVE` | Verifikasi end-to-end di router fisik |
+
+Run: `go test ./cache/ ./builder/ -v -run "Invalidate|ExecCached"`.
 
 ### Redis (build-tag `redis`)
 
