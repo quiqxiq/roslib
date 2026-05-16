@@ -54,14 +54,28 @@ func connect() (*roslib.Device, error) {
 
 ## Loading konfigurasi
 
-Library punya loader env stdlib:
+Library punya loader env stdlib. **Rekomendasi pakai `NewManagerFromConfig`** — Manager memegang koneksi persisten by-name, sehingga acquire ulang tidak re-dial:
 
 ```go
 import "github.com/quiqxiq/roslib/config"
 
 cfg, err := config.LoadFromEnv()
 if err != nil { ... }
-dev, influxCli, err := roslib.NewFromConfig(ctx, cfg, logger)
+
+mgr, influxCli, err := roslib.NewManagerFromConfig(ctx, cfg, logger)
+if err != nil { ... }
+defer mgr.CloseAll()
+if influxCli != nil { defer influxCli.Close() }
+
+dev, _ := mgr.Get(roslib.DefaultDeviceKey)
+// pemanggilan ulang mgr.Get(...) reuse pointer yang sama — 0 login tambahan
+```
+
+Pola lama (deprecated, tetap kerja) — `NewFromConfig` return `*Device` mentah, caller harus tracking lifecycle sendiri:
+
+```go
+dev, influxCli, err := roslib.NewFromConfig(ctx, cfg, logger) // deprecated
+defer dev.Close()
 ```
 
 Env yang dibaca (lihat `.env.example`):
@@ -121,25 +135,35 @@ ID dash di-translate ke underscore di nama env: `office-gw` → `ROSLIB_ROUTER_O
 
 ### Konstruksi
 
+Rekomendasi pakai `NewManagerFromFleet` — semua router di-register ke satu Manager, acquire ulang tidak re-dial:
+
 ```go
 import "github.com/quiqxiq/roslib/config"
 
 fleetCfg, _ := config.LoadFleetFromEnv()
-fleet, influxCli, _ := roslib.NewFleet(ctx, fleetCfg, logger)
-defer roslib.CloseAll(fleet)
+mgr, influxCli, _ := roslib.NewManagerFromFleet(ctx, fleetCfg, logger)
+defer mgr.CloseAll()
 if influxCli != nil { defer influxCli.Close() }
 
 // Akses per ID
-rb1 := fleet["rb1"]
+rb1, _ := mgr.Get("rb1")
 reply, _ := rb1.Path("/ip/address").Print().Exec(ctx)
 
-// Fan-out manual
-for id, dev := range fleet {
+// Iterasi semua device
+for _, id := range mgr.Names() {
+    dev, _ := mgr.Get(id)
     go func(id string, d *roslib.Device) {
         rep, _ := d.Path("/system/resource").Print().Exec(ctx)
         log.Printf("[%s] uptime=%s", id, rep.Rows[0].Get("uptime"))
     }(id, dev)
 }
+```
+
+Pola lama (deprecated, tetap kerja) — `NewFleet` return `map[string]*Device`:
+
+```go
+fleet, influxCli, _ := roslib.NewFleet(ctx, fleetCfg, logger) // deprecated
+defer roslib.CloseAll(fleet)
 ```
 
 ### Cache + multi-router
@@ -153,7 +177,66 @@ roslib:rb2:<hash>   ← cache untuk rb2, isi bisa berbeda
 
 ### Atomic dial
 
-`NewFleet` dial semua router sekuensial. Kalau satu gagal, semua yang sudah berhasil di-close (rollback) dan return error. Caller yang butuh "best-effort" (skip router yang gagal) boleh loop manual `device.New` sendiri.
+`NewManagerFromFleet` dial semua router sekuensial. Kalau satu gagal, semua yang sudah berhasil di-close (rollback) dan return error. Caller yang butuh "best-effort" (skip router yang gagal) boleh konstruk `Manager` kosong lewat `roslib.NewManager()` lalu `Register` per router dengan error handling sendiri.
+
+---
+
+## Persistent connection via Manager
+
+`*device.RouterDevice` sudah persistent secara internal (2 koneksi async + supervisor reconnect), tapi setiap panggilan `device.New` atau `roslib.New[FromConfig]` membuka sesi baru di MikroTik. Untuk service yang sering re-acquire device (mis. HTTP handler yang pegang ID router dari path), pakai Manager supaya 1 router = 1 login sepanjang umur aplikasi.
+
+### Pola dasar
+
+```go
+mgr, influxCli, _ := roslib.NewManagerFromConfig(ctx, cfg, log)
+defer mgr.CloseAll()
+
+// Setiap HTTP request misalnya:
+func handle(w http.ResponseWriter, r *http.Request) {
+    dev, err := mgr.Get(roslib.DefaultDeviceKey) // tidak dial — reuse
+    if err != nil { http.Error(w, err.Error(), 500); return }
+    reply, _ := dev.Path("/system/resource").Print().Exec(r.Context())
+    json.NewEncoder(w).Encode(reply.Rows)
+}
+```
+
+| Method | Perilaku |
+|---|---|
+| `mgr.Register(ctx, name, opts)` | Dial sekali, store dengan key. Error kalau name sudah ada dan masih alive. |
+| `mgr.Get(name)` | Reuse device yang ada. Error kalau belum di-register. **Tidak** verifikasi alive — caller cek `dev.IsAlive()` kalau perlu. |
+| `mgr.GetOrConnect(ctx, name, opts)` | Reuse kalau alive, dial baru kalau belum ada atau sudah mati. Double-checked locking. **Workhorse production.** |
+| `mgr.Unregister(name)` | Close + hapus dari pool. |
+| `mgr.CloseAll()` | Close semua, kosongkan pool. |
+| `mgr.Names()` | List semua key terdaftar. |
+
+### Bukti behaviour
+
+Lihat `cmd/test-persistence/main.go` (pola Manager) dan `cmd/test-nonpersistence/main.go` (pola `device.New` per-acquire). Dijalankan langsung ke router:
+
+```bash
+go run ./cmd/test-nonpersistence   # 5 iterasi → +10 login di /log
+go run ./cmd/test-persistence      # 10 acquire → +0..1 login (pointer identik)
+```
+
+### Power-user: koneksi terpisah per role
+
+Kalau workload streaming bisa membanjiri queue command (misal `/tool/sniffer` + heavy query), pisahkan koneksi pakai `RoleKey` helper:
+
+```go
+streamKey := roslib.RoleKey("rb1", roslib.RoleStream)
+cmdKey    := roslib.RoleKey("rb1", roslib.RoleCommand)
+mutKey    := roslib.RoleKey("rb1", roslib.RoleMutation)
+
+mgr.Register(ctx, streamKey, streamOpts) // queue besar, no timeout
+mgr.Register(ctx, cmdKey, cmdOpts)       // timeout 10s
+mgr.Register(ctx, mutKey, mutOpts)       // timeout 30s
+
+streamDev, _ := mgr.Get(streamKey)
+cmdDev, _    := mgr.Get(cmdKey)
+mutDev, _    := mgr.Get(mutKey)
+```
+
+Tiap key = `RouterDevice` independen dengan 2 koneksi internal sendiri (jadi 6 koneksi total ke router fisik yang sama). Tidak otomatis — Manager hanya menyediakan key namespace. Default `NewManagerFromConfig` / `NewManagerFromFleet` hanya register 1 device per router.
 
 ---
 

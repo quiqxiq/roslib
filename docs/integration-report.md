@@ -453,3 +453,147 @@ Untuk dev-friendly setup:
 - Unit test: **54/54 passed dengan `-race`** (4 baru di iterasi-3: 2 builder finite-stream + 2 cache scoped invalidate).
 - Integration: **18 passed / 1 warn / 0 fail**.
 - Race detection: clean.
+
+---
+
+## Iterasi-4 — Persistent connection via Manager (16 Mei 2026)
+
+### Konteks
+
+`device.Manager` sudah lengkap (Register/Get/GetOrConnect/Unregister/CloseAll + RoleKey) tetapi sebelumnya **tidak dipakai sama sekali** oleh top-level `roslib` API. `roslib.NewFromConfig` dan `roslib.NewFleet` return device mentah → setiap pemanggilan ulang membuka sesi baru di MikroTik. Iterasi-4 wire Manager ke entry point publik supaya service yang acquire device by-name tidak menghabiskan slot login router.
+
+### BEFORE baseline
+
+Hasil `go run ./cmd/test-nonpersistence` terhadap 192.168.230.2:8728 (rb2, RouterOS 7.20.8):
+
+```
+STEP 0: login count di /log = 118
+STEP 1: 5 iterasi device.New
+  iter 1: pointer 0x1611502c89a0  +2 login
+  iter 2: pointer 0x1611503741c0  +2 login
+  iter 3: pointer 0x1611500c6000  +2 login
+  iter 4: pointer 0x161150496310  +2 login
+  iter 5: pointer 0x1611500db0a0  +2 login
+STEP 2: login akhir = 130 → total delta +12
+  (5 iter × 2 conn = 10 + baseline 1 + reader 1)
+```
+
+Hasil `go run ./cmd/test-persistence`:
+
+```
+STEP 1: 1× mgr.Register("gw"), pointer 0x2745fba94000
+STEP 2: 5× mgr.Get → semua pointer 0x2745fba94000 (identik)
+STEP 3: 5× mgr.GetOrConnect → semua pointer 0x2745fba94000 (identik)
+STEP 4: 10× dev.Path(...).Exec → tidak ada re-dial
+STEP 5: delta login = 0 (login terjadi di STEP 1 sebelum counter dimulai)
+STEP 7: CloseAll → IsAlive=false (logout)
+```
+
+Pattern: tanpa Manager, N acquire ≈ 2N login. Dengan Manager, N acquire = 1 login.
+
+### Perubahan API (additive — back-compat dijaga)
+
+```go
+// Baru di roslib.go
+type Manager = device.Manager
+type ConnectionRole = device.ConnectionRole
+const (
+    RoleStream   = device.RoleStream
+    RoleCommand  = device.RoleCommand
+    RoleMutation = device.RoleMutation
+)
+const DefaultDeviceKey = "default"
+
+func NewManager() *Manager
+func RoleKey(routerName string, role ConnectionRole) string
+func NewManagerFromConfig(ctx, cfg, log) (*Manager, *influxdb3.Client, error)
+func NewManagerFromFleet(ctx, fleetCfg, log) (*Manager, *influxdb3.Client, error)
+
+// Lama (deprecated comment, tetap kerja)
+func NewFromConfig(...) (*Device, *influxdb3.Client, error)
+func NewFleet(...) (map[string]*Device, *influxdb3.Client, error)
+```
+
+### File diubah
+
+- `roslib.go` — alias + role re-export + 3 konstruktor baru + deprecation comment di NewFromConfig/NewFleet.
+- `cmd/integration/main.go`:
+  - Entry: `NewFromConfig` → `NewManagerFromConfig`; `dev = mgr.Get(DefaultDeviceKey)`.
+  - EXEC-CACHED + CACHE/INVALIDATE-LIVE: `roslib.New` ad-hoc → `mgr.Register("exec-cached-test"|"invalidate-test", opts)` + `mgr.Unregister(...)`.
+  - FLEET/SMOKE + COMBO: `NewFleet` → `NewManagerFromFleet`; iterasi pakai `mgr.Names()` + `mgr.Get(id)`.
+  - **PERSIST/REUSE scenario baru** — 5× Get + 5× GetOrConnect, assert `CommandConn()` identik.
+- `examples/usage/main.go`, `examples/influx/main.go` — switch ke `NewManagerFromConfig`.
+- `docs/USAGE.md` — seksi "Persistent connection via Manager" + revisi Loading konfigurasi + Multi-router.
+
+### Reused existing
+
+- `device.NewManager` / `Manager.{Register,Get,GetOrConnect,Unregister,CloseAll,Names}` (`device/manager.go`).
+- `device.RoleKey` + `device.{RoleStream,RoleCommand,RoleMutation}` (`device/manager.go:144-159`).
+- `device.RouterDevice.{IsAlive,CommandConn,Close}` (`device/device.go:107,125,79`).
+- `config.{LoadFromEnv,LoadFleetFromEnv}`, `Config.ToDeviceOptions`.
+
+### AFTER live run (16 Mei 2026 12:08 GMT+7)
+
+**Build/test gating:**
+
+- `go build ./...` ✓
+- `go vet ./...` ✓
+- `go build -tags=example ./examples/...` ✓
+- `go test -race ./...` → **54/54 passed in 14 packages** (no regression dari iterasi-3).
+
+**Live integration** (router rb1=192.168.233.1 RouterOS 6.49.11, rb2=192.168.230.2 RouterOS 7.20.8, InfluxDB3 Core lokal):
+
+**19 passed / 0 fail / 0 warn** — semua skenario hijau termasuk skenario baru.
+
+```
+▶ BOOT — loading config from environment
+  ✓ BOOT: device connected via Manager, registry loaded, influx ready=true
+
+▶ EXEC-CACHED — PrintBuilder.ExecCached × 2 — second call hit cache?
+  ✓ EXEC-CACHED: rows=2 ; first=11ms second=0s (second should be much faster)
+  (sekarang lewat mgr.Register("exec-cached-test"); auto Unregister di defer)
+
+▶ CACHE/INVALIDATE-LIVE — ExecCached × 2 → invalidate → ExecCached miss again
+  ✓ CACHE/INVALIDATE-LIVE: rows=2 entries(before-invalidate)=1 after-invalidate=0 → fresh fetch ok
+  (sekarang lewat mgr.Register("invalidate-test"); auto Unregister di defer)
+
+▶ FLEET/SMOKE — NewManagerFromFleet dari .env (multi-router) — verifikasi pool+CloseAll
+  ✓ FLEET/SMOKE: routers=2 [rb1="G-Net" rb2="MikroTik"]
+
+▶ PERSIST/REUSE — Manager.Get×5 + GetOrConnect×5 — pointer identik, tanpa re-dial
+  ✓ PERSIST/REUSE: 5×Get + 5×GetOrConnect semua pointer identik 0x131bebfe0850 (no re-dial)
+
+▶ STREAM/FINITE-CLEANUP — verifikasi listener entry dibersihkan setelah !done natural
+  ✓ STREAM/FINITE-CLEANUP: rx=1 OnFinish err=<nil> before=0 after=0 (entry cleaned)
+
+▶ COMBO/CACHE+INFLUX+FLEET — exercise cache hit + influx write per device
+    cache: routers=2 entries=2 Δhits=2 Δsets=2 ✓
+    influx: device_ids=map[rb1:2 rb2:2] ✓
+  ✓ COMBO/CACHE+INFLUX+FLEET: routers=2 cache(hits=3 misses=3 entries=2) influx-write+query ok, scoped-invalidate ok
+```
+
+**test-persistence ulang post-refactor:**
+
+```
+STEP 1: Register OK, pointer 0xb8a716fa0e0
+STEP 2: 5× Get → semua pointer 0xb8a716fa0e0 (identik)
+STEP 3: 5× GetOrConnect → semua pointer 0xb8a716fa0e0 (identik)
+STEP 4: 10/10 command lewat satu koneksi
+STEP 5: delta login = 0
+STEP 6: IsAlive() = true
+STEP 7: CloseAll → IsAlive() = false (logout terjadi)
+```
+
+Manager behavior identik dengan baseline BEFORE — refactor tidak menyentuh `device.Manager` internals.
+
+### Final stats Iterasi-4
+
+| Metric | Value |
+|---|---|
+| Unit test (race-clean) | **54/54 passed** in 14 packages |
+| Integration scenarios | **19 passed / 0 fail / 0 warn** (+1 vs iterasi-3) |
+| Skenario baru | PERSIST/REUSE — 10 acquire, 0 re-dial |
+| API breaking change | **None** — additive only, lama dideprecate dengan comment |
+| Dependencies baru | **None** — wire-up ke `device.Manager` existing |
+
+**Kesimpulan**: top-level `roslib.NewManagerFromConfig` / `NewManagerFromFleet` sekarang menjamin **1 router fisik = 1 login** sepanjang lifetime aplikasi. Caller yang re-acquire device by-name (pola HTTP handler, scheduler, dst.) tidak lagi membanjiri MikroTik log dengan login/logout entries.

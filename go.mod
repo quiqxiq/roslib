@@ -6,6 +6,7 @@ require (
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.14.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/go-routeros/routeros/v3 v3.0.1
+	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/samber/slog-logrus/v2 v2.5.4
 	github.com/sirupsen/logrus v1.9.4

@@ -47,15 +47,19 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	dev, influxCli, err := roslib.NewFromConfig(ctx, cfg, log)
+	mgr, influxCli, err := roslib.NewManagerFromConfig(ctx, cfg, log)
 	if err != nil {
 		fatal("device dial: %v", err)
 	}
-	defer dev.Close()
+	defer mgr.CloseAll()
 	if influxCli != nil {
 		defer influxCli.Close()
 	}
-	pass("BOOT", "device connected, registry loaded, influx ready=%v", influxCli != nil)
+	dev, derr := mgr.Get(roslib.DefaultDeviceKey)
+	if derr != nil {
+		fatal("manager Get(%q): %v", roslib.DefaultDeviceKey, derr)
+	}
+	pass("BOOT", "device connected via Manager, registry loaded, influx ready=%v", influxCli != nil)
 
 	// ── Capability registry ───────────────────────────────────────────
 	step("CAPABILITY", "verify registry contents")
@@ -223,11 +227,11 @@ func main() {
 	cachedOpts.Cache = cache.NewInMemory()
 	cachedOpts.CacheTTL = 30 * time.Second
 	cachedOpts.StrictCapability = true
-	dev2, derr := roslib.New(ctx, cachedOpts)
-	if derr != nil {
-		fail("EXEC-CACHED", "%v", derr)
+	if rerr := mgr.Register(ctx, "exec-cached-test", cachedOpts); rerr != nil {
+		fail("EXEC-CACHED", "%v", rerr)
 	} else {
-		defer dev2.Close()
+		defer mgr.Unregister("exec-cached-test")
+		dev2, _ := mgr.Get("exec-cached-test")
 		t1 := time.Now()
 		r1, _ := dev2.Path("/ip/address").Print().ExecCached(ctx, 30*time.Second)
 		d1 := time.Since(t1)
@@ -380,11 +384,11 @@ func main() {
 	invOpts.CacheTTL = time.Hour
 	invOpts.StrictCapability = true
 	invOpts.ID = "test-inv"
-	dev3, ierr := roslib.New(ctx, invOpts)
-	if ierr != nil {
-		fail("CACHE/INVALIDATE-LIVE", "dial: %v", ierr)
+	if rerr := mgr.Register(ctx, "invalidate-test", invOpts); rerr != nil {
+		fail("CACHE/INVALIDATE-LIVE", "dial: %v", rerr)
 	} else {
-		defer dev3.Close()
+		defer mgr.Unregister("invalidate-test")
+		dev3, _ := mgr.Get("invalidate-test")
 		r1, _ := dev3.Path("/ip/address").Print().ExecCached(ctx, time.Hour)
 		entriesBefore := invCache.Len()
 		r2, _ := dev3.Path("/ip/address").Print().ExecCached(ctx, time.Hour)
@@ -405,28 +409,71 @@ func main() {
 	}
 
 	// ── Fleet smoke: load .env user (ROSLIB_ROUTERS=...) → dial semua ──
-	step("FLEET/SMOKE", "NewFleet dari .env (multi-router) — verifikasi map+Close")
+	step("FLEET/SMOKE", "NewManagerFromFleet dari .env (multi-router) — verifikasi pool+CloseAll")
 	fleetCfg, ferr := config.LoadFleetFromEnv()
 	if ferr != nil {
 		warn("FLEET/SMOKE", "load: %v (skip)", ferr)
 	} else {
-		fleet, _, fferr := roslib.NewFleet(ctx, fleetCfg, log)
+		fleetMgr, _, fferr := roslib.NewManagerFromFleet(ctx, fleetCfg, log)
 		if fferr != nil {
-			fail("FLEET/SMOKE", "NewFleet: %v", fferr)
+			fail("FLEET/SMOKE", "NewManagerFromFleet: %v", fferr)
 		} else {
-			names := make([]string, 0, len(fleet))
-			for id, rb := range fleet {
+			ids := fleetMgr.Names()
+			labels := make([]string, 0, len(ids))
+			for _, id := range ids {
+				rb, gerr := fleetMgr.Get(id)
+				if gerr != nil {
+					fail("FLEET/SMOKE", "Get(%s): %v", id, gerr)
+					continue
+				}
 				rep, qerr := rb.Path("/system/identity").Print().Exec(ctx)
 				if qerr != nil {
 					fail("FLEET/SMOKE", "%s identity: %v", id, qerr)
 					continue
 				}
 				if len(rep.Rows) > 0 {
-					names = append(names, fmt.Sprintf("%s=%q", id, rep.Rows[0].Get("name")))
+					labels = append(labels, fmt.Sprintf("%s=%q", id, rep.Rows[0].Get("name")))
 				}
 			}
-			pass("FLEET/SMOKE", "routers=%d %v", len(fleet), names)
-			roslib.CloseAll(fleet)
+			pass("FLEET/SMOKE", "routers=%d %v", len(ids), labels)
+			fleetMgr.CloseAll()
+		}
+	}
+
+	// ── Persistent connection reuse: Manager.Get/GetOrConnect identik ─
+	step("PERSIST/REUSE", "Manager.Get×5 + GetOrConnect×5 — pointer identik, tanpa re-dial")
+	refConn := dev.CommandConn()
+	if refConn == nil {
+		fail("PERSIST/REUSE", "CommandConn nil — koneksi tidak siap")
+	} else {
+		mismatch := 0
+		for i := 1; i <= 5; i++ {
+			d, gerr := mgr.Get(roslib.DefaultDeviceKey)
+			if gerr != nil {
+				fail("PERSIST/REUSE", "Get iter %d: %v", i, gerr)
+				mismatch++
+				continue
+			}
+			if d.CommandConn() != refConn {
+				mismatch++
+			}
+		}
+		for i := 1; i <= 5; i++ {
+			cfgOpts := cfg.ToDeviceOptions(log)
+			d, gerr := mgr.GetOrConnect(ctx, roslib.DefaultDeviceKey, cfgOpts)
+			if gerr != nil {
+				fail("PERSIST/REUSE", "GetOrConnect iter %d: %v", i, gerr)
+				mismatch++
+				continue
+			}
+			if d.CommandConn() != refConn {
+				mismatch++
+			}
+		}
+		if mismatch == 0 {
+			pass("PERSIST/REUSE", "5×Get + 5×GetOrConnect semua pointer identik %p (no re-dial)", refConn)
+		} else {
+			fail("PERSIST/REUSE", "%d/10 acquire pointer-drift dari %p", mismatch, refConn)
 		}
 	}
 
@@ -497,33 +544,37 @@ func lenSafe(c *config.FleetConfig) int {
 }
 
 func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.FleetConfig) {
-	fleet, influxCli, ferr := roslib.NewFleet(ctx, fleetCfg, log)
+	mgr, influxCli, ferr := roslib.NewManagerFromFleet(ctx, fleetCfg, log)
 	if ferr != nil {
-		fail("COMBO/CACHE+INFLUX+FLEET", "NewFleet: %v", ferr)
+		fail("COMBO/CACHE+INFLUX+FLEET", "NewManagerFromFleet: %v", ferr)
 		return
 	}
-	defer roslib.CloseAll(fleet)
+	defer mgr.CloseAll()
 	if influxCli != nil {
 		defer influxCli.Close()
 	}
+	ids := mgr.Names()
 
-	// Cache shared antar device. NewFleet sudah pasang InMemoryCache di Options.
-	// Ambil dari salah satu device untuk inspect Stats().
+	// Cache shared antar device. NewManagerFromFleet sudah pasang InMemoryCache
+	// di Options tiap device. Ambil dari device pertama untuk inspect Stats().
 	var shared *cache.InMemoryCache
-	for _, dev := range fleet {
+	for _, id := range ids {
+		dev, _ := mgr.Get(id)
 		if im, ok := dev.Cache().(*cache.InMemoryCache); ok {
 			shared = im
 			break
 		}
 	}
 	if shared == nil {
-		fail("COMBO/CACHE+INFLUX+FLEET", "expected InMemoryCache, got %T", firstCacheType(fleet))
+		first, _ := mgr.Get(ids[0])
+		fail("COMBO/CACHE+INFLUX+FLEET", "expected InMemoryCache, got %T", first.Cache())
 		return
 	}
 
 	// 1. ExecCached 2x per router → call ke-2 harus hit.
 	statsBefore := shared.Stats()
-	for id, dev := range fleet {
+	for _, id := range ids {
+		dev, _ := mgr.Get(id)
 		if _, err := dev.Path("/system/resource").Print().ExecCached(ctx, 30*time.Second); err != nil {
 			fail("COMBO/CACHE+INFLUX+FLEET", "ExecCached miss %s: %v", id, err)
 			return
@@ -534,8 +585,8 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 		}
 	}
 	statsAfter := shared.Stats()
-	expectedHits := int64(len(fleet))
-	expectedSets := int64(len(fleet))
+	expectedHits := int64(len(ids))
+	expectedSets := int64(len(ids))
 	hits := statsAfter.Hits - statsBefore.Hits
 	sets := statsAfter.Sets - statsBefore.Sets
 	if hits != expectedHits || sets != expectedSets {
@@ -545,7 +596,7 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 		return
 	}
 	fmt.Printf("    cache: routers=%d entries=%d Δhits=%d Δsets=%d ✓\n",
-		len(fleet), statsAfter.Entries, hits, sets)
+		len(ids), statsAfter.Entries, hits, sets)
 
 	// 2. Multi-router poll → InfluxDB write. Writer per device dengan tag device_id.
 	if influxCli == nil {
@@ -560,9 +611,9 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 			"total_memory": total,
 		}
 	}
-	for _, dev := range fleet {
+	for _, id := range ids {
+		dev, _ := mgr.Get(id)
 		devID := dev.DeviceID()
-		dev := dev
 		tagsFn := func(_ *decode.Sentence) map[string]string {
 			return map[string]string{"device_id": devID, "scope": "combo"}
 		}
@@ -580,7 +631,8 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 	}
 	// Biarkan 4 detik → ≥2 tick per router.
 	time.Sleep(4 * time.Second)
-	for _, dev := range fleet {
+	for _, id := range ids {
+		dev, _ := mgr.Get(id)
 		_ = dev.UnregisterPoll("combo-resource")
 	}
 
@@ -603,38 +655,34 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 				seen[devID] = int64(v)
 			}
 		}
-		if len(seen) < len(fleet) {
+		if len(seen) < len(ids) {
 			fail("COMBO/CACHE+INFLUX+FLEET",
 				"influx rows: got %d device_id, want %d (seen=%v)",
-				len(seen), len(fleet), seen)
+				len(seen), len(ids), seen)
 			return
 		}
 		fmt.Printf("    influx: device_ids=%v ✓\n", seen)
 	}
 
 	// 4. Cache invalidate scoped — affect satu device, lainnya tetap hit.
-	var pickID string
-	var pickDev *roslib.Device
-	for id, d := range fleet {
-		pickID, pickDev = id, d
-		break
-	}
+	pickID := ids[0]
+	pickDev, _ := mgr.Get(pickID)
 	if err := pickDev.InvalidateCache(ctx, "/system/resource"); err != nil {
 		fail("COMBO/CACHE+INFLUX+FLEET", "InvalidateCache %s: %v", pickID, err)
 		return
 	}
 	preMiss := shared.Stats().Misses
 	preHit := shared.Stats().Hits
-	for id, d := range fleet {
+	for _, id := range ids {
+		d, _ := mgr.Get(id)
 		_, _ = d.Path("/system/resource").Print().ExecCached(ctx, 30*time.Second)
-		_ = id
 	}
 	postStats := shared.Stats()
 	deltaMiss := postStats.Misses - preMiss
 	deltaHit := postStats.Hits - preHit
 	// Setelah invalidate satu device: 1 miss (yang di-invalidate) + (len-1) hit.
 	wantMiss := int64(1)
-	wantHit := int64(len(fleet) - 1)
+	wantHit := int64(len(ids) - 1)
 	if deltaMiss != wantMiss || deltaHit != wantHit {
 		fail("COMBO/CACHE+INFLUX+FLEET",
 			"invalidate scope: Δmiss=%d (want %d) Δhit=%d (want %d) — cache key bukan device-scoped?",
@@ -644,14 +692,7 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 
 	pass("COMBO/CACHE+INFLUX+FLEET",
 		"routers=%d cache(hits=%d misses=%d entries=%d) influx-write+query ok, scoped-invalidate ok",
-		len(fleet), postStats.Hits, postStats.Misses, postStats.Entries)
-}
-
-func firstCacheType(fleet map[string]*roslib.Device) any {
-	for _, dev := range fleet {
-		return dev.Cache()
-	}
-	return nil
+		len(ids), postStats.Hits, postStats.Misses, postStats.Entries)
 }
 
 

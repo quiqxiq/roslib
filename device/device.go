@@ -98,6 +98,21 @@ func (d *RouterDevice) Close() error {
 	return nil
 }
 
+// IsAlive melaporkan apakah device masih aktif: context belum cancel
+// dan kedua koneksi tidak nil.
+//
+// Dipakai oleh Manager.GetOrConnect untuk memutuskan apakah perlu
+// buat koneksi baru. Tidak menjamin koneksi TCP sedang up — itu
+// tanggung jawab supervisor. Cukup untuk guard di sisi Manager.
+func (d *RouterDevice) IsAlive() bool {
+	if d.ctx.Err() != nil {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.connStream != nil && d.connCommand != nil
+}
+
 // Context mengembalikan context internal device. Cancel pada parent akan
 // otomatis mem-propagate ke seluruh subsistem.
 func (d *RouterDevice) Context() context.Context { return d.ctx }

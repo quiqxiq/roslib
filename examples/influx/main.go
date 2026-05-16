@@ -40,13 +40,17 @@ func main() {
 	}
 
 	ctx := context.Background()
-	dev, ifc, err := roslib.NewFromConfig(ctx, cfg, logger)
+	mgr, ifc, err := roslib.NewManagerFromConfig(ctx, cfg, logger)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer dev.Close()
+	defer mgr.CloseAll()
 	if ifc != nil {
 		defer ifc.Close()
+	}
+	dev, gerr := mgr.Get(roslib.DefaultDeviceKey)
+	if gerr != nil {
+		log.Fatal(gerr)
 	}
 
 	// ── Writer: hasil poll /system/resource → measurement "system_resource"

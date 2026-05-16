@@ -23,30 +23,34 @@ func main() {
 
 	ctx := context.Background()
 
-	// Option A: literal Options (manual).
-	device, err := roslib.New(ctx, roslib.Options{
-		Address:          "192.168.88.1:8728",
-		Username:         "admin",
-		Password:         "secret",
-		Logger:           log,
-		ListenQueueSize:  100,
-		StrictCapability: true,
-	})
-	if err != nil {
-		log.Fatal(err)
+	// Pola rekomendasi: NewManagerFromConfig — Manager memegang koneksi
+	// persisten, caller acquire device via mgr.Get(roslib.DefaultDeviceKey).
+	cfg, cerr := config.LoadFromEnv()
+	if cerr != nil {
+		log.Fatal(cerr)
 	}
-	defer device.Close()
+	mgr, _, merr := roslib.NewManagerFromConfig(ctx, cfg, log)
+	if merr != nil {
+		log.Fatal(merr)
+	}
+	defer mgr.CloseAll()
+	device, gerr := mgr.Get(roslib.DefaultDeviceKey)
+	if gerr != nil {
+		log.Fatal(gerr)
+	}
 
-	// Option B: NewFromConfig — load semua dari env. Comment-out di-atas
-	// dan pakai blok ini kalau pengin loader env.
+	// Pola lama (deprecated, tetap kerja) — literal Options + roslib.New.
 	if false {
-		cfg, cerr := config.LoadFromEnv()
-		if cerr != nil {
-			log.Fatal(cerr)
-		}
-		dev, _, ferr := roslib.NewFromConfig(ctx, cfg, log)
-		if ferr != nil {
-			log.Fatal(ferr)
+		dev, err := roslib.New(ctx, roslib.Options{
+			Address:          "192.168.88.1:8728",
+			Username:         "admin",
+			Password:         "secret",
+			Logger:           log,
+			ListenQueueSize:  100,
+			StrictCapability: true,
+		})
+		if err != nil {
+			log.Fatal(err)
 		}
 		defer dev.Close()
 	}
