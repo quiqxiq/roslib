@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/quiqxiq/roslib"
@@ -202,20 +203,33 @@ func main() {
 	// ── /tool/ping vs router v6 (registry v7 mismatch demo) ──────────
 	// Test ini menunjukkan trade-off versi registry: router lapangan
 	// (v6.49.11 RB750G) pakai path legacy "/ping", bukan "/tool/ping" v7.
-	// Strict validator menerima sentence (path ada di registry v7), tapi
-	// router merespons "no such command". Expected behavior — bukan bug.
-	step("RUN/PING-V7", "/tool/ping (registry-valid v7) — expected REJECT oleh router v6")
+	// /tool/ping di registry v7 valid sebagai mutation/run. Behavior router:
+	//   v7 (RouterOS 7.x): execute → return reply atau error sesuai jaringan.
+	//   v6 (RouterOS 6.x): "no such command" — path tidak ada.
+	// Test pass kalau hasil konsisten dengan versi router (deteksi dari resReply).
+	routerVer := ""
+	if resReply != nil && len(resReply.Rows) > 0 {
+		routerVer = resReply.Rows[0].Get("version")
+	}
+	expectReject := strings.HasPrefix(routerVer, "6.")
+	verLabel := "v7+"
+	if expectReject {
+		verLabel = "v6"
+	}
+	step("RUN/PING-V7", fmt.Sprintf("/tool/ping vs router %s (ver=%s)", verLabel, routerVer))
 	_, err = dev.Path("/tool").Run(ctx, "ping",
 		roslib.NewPair("address", "8.8.8.8"),
 		roslib.NewPair("count", "3"),
 	)
-	if err != nil {
-		var devErr *capability.ErrInvalidClass
-		_ = devErr
-		// Error dari device adalah dari ROUTER, bukan library.
+	switch {
+	case err != nil && expectReject:
 		pass("RUN/PING-V7", "router reject (expected on v6): %v", err)
-	} else {
-		warn("RUN/PING-V7", "unexpected success on v6 router")
+	case err == nil && !expectReject:
+		pass("RUN/PING-V7", "router accepted (expected on v7+)")
+	case err != nil && !expectReject:
+		fail("RUN/PING-V7", "v7+ router unexpectedly rejected: %v", err)
+	default:
+		fail("RUN/PING-V7", "v6 router unexpectedly accepted /tool/ping")
 	}
 
 	// ── ExecCached round-trip ────────────────────────────────────────

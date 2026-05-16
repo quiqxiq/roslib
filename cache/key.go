@@ -25,16 +25,18 @@ func KeyOf(deviceID string, sentence []string) string {
 }
 
 // PathFromSentence mengekstrak path RouterOS dari sentence yang dibuat
-// query.BuildSentence. Sentence pertama berbentuk seperti "/ip/address/print"
-// — kita kembalikan "/ip/address" (yaitu first word minus segmen aksi
-// terakhir). Untuk inherent-streaming seperti "/interface/monitor-traffic"
-// (path = first word penuh, tidak ada aksi terpisah), kita kembalikan
-// "/interface/monitor-traffic" apa adanya.
+// query.BuildSentence dengan asumsi sentence terakhir adalah aksi (mis.
+// "print", "add", "remove"). Sentence pertama berbentuk "/ip/address/print"
+// → kembalikan "/ip/address".
 //
-// Aturan: kalau first word punya minimal 2 segmen "/x/y", potong segmen
-// terakhir (asumsi action). Kalau hanya 1 segmen ("/x"), kembalikan apa
-// adanya. Heuristik ini cocok untuk pola pemakaian ExecCached yang
-// selalu pakai action `print`.
+// Aturan: potong segmen terakhir dari first word kalau ada minimal 2 segmen.
+// Kalau hanya 1 segmen ("/x"), kembalikan apa adanya.
+//
+// CATATAN: untuk inherent-streaming (mis. "/interface/monitor-traffic"),
+// helper ini akan strip jadi "/interface" — TIDAK cocok dipakai sebagai
+// cache path untuk command tersebut. Fungsi ini hanya dipakai sebagai
+// helper publik; ExecCached internal pakai PathBuilder.path langsung
+// (selalu correct), bukan PathFromSentence.
 func PathFromSentence(sentence []string) string {
 	if len(sentence) == 0 {
 		return ""

@@ -91,10 +91,13 @@ func (m *Manager) GetOrConnect(ctx context.Context, name string, opts Options) (
 	// tutup koneksi lama yang sudah mati (kalau ada) sebelum buat baru
 	if ok {
 		_ = dev.Close()
+		delete(m.devices, name)
 	}
 
 	newDev, err := New(ctx, opts)
 	if err != nil {
+		// Stale entry sudah di-delete di atas — Get(name) sekarang konsisten
+		// (not found) sampai retry GetOrConnect berhasil.
 		return nil, fmt.Errorf("manager: connect %q: %w", name, err)
 	}
 	m.devices[name] = newDev
