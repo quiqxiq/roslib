@@ -20,9 +20,6 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Router.ListenQueueSize != 100 {
 		t.Errorf("ListenQueueSize default = %d, want 100", cfg.Router.ListenQueueSize)
 	}
-	if !cfg.StrictCapability {
-		t.Error("StrictCapability default should be true")
-	}
 	if cfg.Cache.Enabled || cfg.Influx.Enabled {
 		t.Error("Cache & Influx default should be disabled")
 	}
@@ -33,7 +30,6 @@ func TestLoadFromEnvCustom(t *testing.T) {
 	t.Setenv("ROSLIB_ROUTER_USERNAME", "admin")
 	t.Setenv("ROSLIB_ROUTER_PASSWORD", "secret")
 	t.Setenv("ROSLIB_DIAL_TIMEOUT", "20s")
-	t.Setenv("ROSLIB_STRICT_CAPABILITY", "false")
 	t.Setenv("ROSLIB_CACHE_ENABLED", "true")
 	t.Setenv("ROSLIB_CACHE_ADDR", "127.0.0.1:6379")
 	t.Setenv("ROSLIB_CACHE_TTL", "1m")
@@ -48,9 +44,6 @@ func TestLoadFromEnvCustom(t *testing.T) {
 	}
 	if cfg.Router.DialTimeout != 20*time.Second {
 		t.Errorf("DialTimeout = %v, want 20s", cfg.Router.DialTimeout)
-	}
-	if cfg.StrictCapability {
-		t.Error("StrictCapability = true, expected false")
 	}
 	if !cfg.Cache.Enabled {
 		t.Error("Cache should be enabled")

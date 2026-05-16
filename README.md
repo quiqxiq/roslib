@@ -1,6 +1,6 @@
 # roslib
 
-Wrapper Go di atas [`github.com/go-routeros/routeros/v3`](https://pkg.go.dev/github.com/go-routeros/routeros/v3) untuk MikroTik RouterOS API, dirancang khusus untuk **async mode + tag multiplexing**: 2 koneksi persisten per router (stream + command), interval-group batching untuk polling, auto-reconnect via `<-chan error`, **capability registry** untuk validasi command lokal, plus hooks ke cache & InfluxDB3 sebagai contoh observability sink.
+Wrapper Go di atas [`github.com/go-routeros/routeros/v3`](https://pkg.go.dev/github.com/go-routeros/routeros/v3) untuk MikroTik RouterOS API, dirancang khusus untuk **async mode + tag multiplexing**: 2 koneksi persisten per router (stream + command), interval-group batching untuk polling, auto-reconnect via `<-chan error`, persistent connection pool via Manager, plus hooks ke cache & InfluxDB3 sebagai contoh observability sink.
 
 > **Status:** sudah teruji terhadap router fisik MikroTik RB750G RouterOS 6.49.11 dan InfluxDB 3 Core. Lihat [docs/integration-report.md](docs/integration-report.md).
 
@@ -10,7 +10,7 @@ Wrapper Go di atas [`github.com/go-routeros/routeros/v3`](https://pkg.go.dev/git
 - ✅ **AsyncContext + tag demux**: ratusan `RunArgs`/`Listen` paralel di satu socket.
 - ✅ **Interval-group polling**: 50 command, 3 interval unik → 3 goroutine ticker, bukan 50.
 - ✅ **Auto-reconnect** dengan exponential backoff + `ReattachAll` untuk listener.
-- ✅ **Capability registry** dari JSON RouterOS 7.20.8 (541 endpoint) di-embed: validasi command + arg + klasifikasi streaming/one-shot otomatis.
+- ✅ **Persistent Manager**: `mgr.Get(name)` reuse koneksi — 1 router = 1 login sepanjang lifetime.
 - ✅ **Fluent builder**: `dev.Path("/ip/address").Print().Where(...).Exec(ctx)` dst.
 - ✅ **Cache + Influx + Config opt-in** lewat env var; toggle independen.
 
@@ -41,11 +41,10 @@ func main() {
     ctx := context.Background()
 
     dev, err := roslib.New(ctx, roslib.Options{
-        Address:          "192.168.88.1:8728",
-        Username:         "admin",
-        Password:         "secret",
-        Logger:           logger,
-        StrictCapability: true,
+        Address:  "192.168.88.1:8728",
+        Username: "admin",
+        Password: "secret",
+        Logger:   logger,
     })
     if err != nil {
         log.Fatal(err)
@@ -89,9 +88,12 @@ cp .env.example .env
 
 ```go
 cfg, _ := config.LoadFromEnv()
-dev, influxCli, _ := roslib.NewFromConfig(ctx, cfg, logger)
-defer dev.Close()
+mgr, influxCli, _ := roslib.NewFromConfig(ctx, cfg, logger)
+defer mgr.CloseAll()
 if influxCli != nil { defer influxCli.Close() }
+
+dev, _ := mgr.Get(roslib.DefaultDeviceKey)
+// pemanggilan mgr.Get() ulang reuse koneksi — 0 dial tambahan
 ```
 
 User app bebas memuat `.env` duluan (mis. via `godotenv`) sebelum panggil `LoadFromEnv`.
@@ -115,47 +117,18 @@ Detail dan contoh lengkap: [docs/USAGE.md](docs/USAGE.md).
 
 ```
 roslib/
-├── roslib.go               public facade — New(), NewFromConfig(), tipe alias
-├── device/                 RouterDevice, 2-koneksi, supervisor, log adapter
+├── roslib.go               public facade — New(), NewFromConfig(), NewFleet(), tipe alias
+├── device/                 RouterDevice + Manager (persistent pool) + supervisor
 ├── builder/                fluent API (Path → Print/Run/Add/Set/Stream)
-├── capability/             registry JSON RouterOS 7.20.8 (embed) + validator
 ├── stream/                 StreamManager + Spec blueprint + ReattachAll
 ├── poll/                   PollEngine + IntervalGroup batching
 ├── decode/                 Sentence wrapper + typed accessors
 ├── query/                  Pair, WherePair, BuildSentence
 ├── cache/                  Cache iface + Noop + InMemory + Redis (build-tag)
 ├── metrics/influx/         InfluxDB3 Writer/Reader/BatchedWriter/Sink helper
-├── config/                 LoadFromEnv + ToDeviceOptions
+├── config/                 LoadFromEnv + LoadFleetFromEnv + ToDeviceOptions
 ├── cmd/integration/        runner test ke router asli (lihat report)
 └── examples/               contoh usage / streaming / influx
-```
-
-## Validasi capability (mode strict)
-
-Default `StrictCapability=true`. Misuse di-tangkap sebelum dikirim ke router:
-
-```go
-_, err := dev.Path("/interface/monitor-traffic").Print().Exec(ctx)
-// → capability: unknown command word /interface/monitor-traffic/print
-//   (path /interface/monitor-traffic adalah Streaming, bukan punya /print)
-
-_, err = dev.Path("/ip/address").Print().Where("addres", "x").Exec(ctx)
-// → capability: arg addres not valid for /ip/address/print
-```
-
-Disable lewat `Options.StrictCapability=false` atau env `ROSLIB_STRICT_CAPABILITY=false`. Saat off, validator hanya log-warn dan tetap kirim sentence ke router.
-
-## Override registry (RouterOS versi lain)
-
-Embed default = RouterOS 7.20.8. Override:
-
-```go
-// dari path (file JSON yang punya format sama)
-cfg.RegistryPath = "/etc/roslib/routeros_6.49.json"
-
-// dari bytes
-reg, _ := capability.Load(capability.LoadOptions{Bytes: customJSON})
-opts.Registry = reg
 ```
 
 ## Cache (opsional)
@@ -240,7 +213,7 @@ go test ./...
 go test -race ./...
 ```
 
-17 unit test pada 11 paket — capability classification, cache TTL, config loader, writer point-build, dst.
+Unit test pada 13 paket — cache TTL + scoped invalidate, config loader, stream lifecycle, writer point-build, device manager persistence, dst.
 
 ## Dokumentasi tambahan
 

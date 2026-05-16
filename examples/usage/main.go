@@ -23,13 +23,13 @@ func main() {
 
 	ctx := context.Background()
 
-	// Pola rekomendasi: NewManagerFromConfig — Manager memegang koneksi
+	// Pola rekomendasi: NewFromConfig — Manager memegang koneksi
 	// persisten, caller acquire device via mgr.Get(roslib.DefaultDeviceKey).
 	cfg, cerr := config.LoadFromEnv()
 	if cerr != nil {
 		log.Fatal(cerr)
 	}
-	mgr, _, merr := roslib.NewManagerFromConfig(ctx, cfg, log)
+	mgr, _, merr := roslib.NewFromConfig(ctx, cfg, log)
 	if merr != nil {
 		log.Fatal(merr)
 	}
@@ -47,7 +47,6 @@ func main() {
 			Password:         "secret",
 			Logger:           log,
 			ListenQueueSize:  100,
-			StrictCapability: true,
 		})
 		if err != nil {
 			log.Fatal(err)

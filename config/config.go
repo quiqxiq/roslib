@@ -16,20 +16,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Config menampung seluruh setelan: router, observability toggle,
-// validator behavior, dan override registry.
+// Config menampung seluruh setelan: router + observability toggle.
 type Config struct {
 	Router RouterConfig
 	Cache  CacheConfig
 	Influx InfluxConfig
-
-	// StrictCapability: kalau true, builder return error Go saat command
-	// tidak match registry (path/arg/class). False = log-warn saja.
-	StrictCapability bool
-
-	// RegistryPath: kalau non-kosong, capability.Load membaca file di path
-	// ini (untuk RouterOS versi non-default). Kosong = pakai embed.
-	RegistryPath string
 }
 
 // RouterConfig menampung field koneksi RouterOS.
@@ -98,8 +89,6 @@ func LoadFromEnv() (*Config, error) {
 			Organization:       os.Getenv("INFLUX_ORG"),
 			DefaultMeasurement: envString("ROSLIB_INFLUX_MEASUREMENT", "roslib"),
 		},
-		StrictCapability: envBool("ROSLIB_STRICT_CAPABILITY", true),
-		RegistryPath:     os.Getenv("ROSLIB_REGISTRY_PATH"),
 	}
 	return cfg, cfg.Validate()
 }

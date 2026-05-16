@@ -25,7 +25,7 @@ func (f *fakeCachedExecutor) RunCommand(ctx context.Context, sentence []string) 
 }
 
 func newFakeCachedExecutor(t *testing.T) *fakeCachedExecutor {
-	base := newFakeExecutor(t, true)
+	base := newFakeExecutor(t)
 	base.c = cache.NewInMemory()
 	return &fakeCachedExecutor{
 		fakeExecutor: base,
@@ -109,10 +109,10 @@ func TestExecCachedInvalidateOtherPath(t *testing.T) {
 // TestExecCachedDeviceScoping: dua device dengan ID berbeda tidak share cache.
 func TestExecCachedDeviceScoping(t *testing.T) {
 	sharedCache := cache.NewInMemory()
-	exA := newFakeExecutor(t, true)
+	exA := newFakeExecutor(t)
 	exA.c = sharedCache
 	exA.deviceID = "dev-A"
-	exB := newFakeExecutor(t, true)
+	exB := newFakeExecutor(t)
 	exB.c = sharedCache
 	exB.deviceID = "dev-B"
 

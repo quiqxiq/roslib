@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/quiqxiq/roslib/cache"
-	"github.com/quiqxiq/roslib/capability"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,20 +47,12 @@ type Options struct {
 	// ReconnectMaxInterval cap atas backoff. 0 = default 30s.
 	ReconnectMaxInterval time.Duration
 
-	// Registry adalah capability registry untuk validasi command/arg di
-	// builder. nil = tanpa validasi (semua command lewat tanpa cek).
-	Registry *capability.Registry
-
 	// Cache di-share lewat Executor untuk PrintBuilder.ExecCached.
 	// nil = NoopCache (akan diisi otomatis oleh New).
 	Cache cache.Cache
 
 	// CacheTTL default untuk ExecCached saat caller pakai TTL 0.
 	CacheTTL time.Duration
-
-	// StrictCapability: kalau true (default), validator return error Go
-	// saat command/arg/class invalid. False = hanya log warning.
-	StrictCapability bool
 }
 
 func (o *Options) listenQueueSize() int {

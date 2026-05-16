@@ -48,7 +48,6 @@ func main() {
 		Username:         user,
 		Password:         passwd,
 		Logger:           log,
-		StrictCapability: false,
 	}
 
 	// ── Header ───────────────────────────────────────────────────────

@@ -34,7 +34,6 @@ func main() {
 		Username:         "admin",
 		Password:         "r00t",
 		Logger:           logger,
-		StrictCapability: true,
 	})
 	if err != nil {
 		log.Fatal(err)

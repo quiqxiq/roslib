@@ -597,3 +597,104 @@ Manager behavior identik dengan baseline BEFORE — refactor tidak menyentuh `de
 | Dependencies baru | **None** — wire-up ke `device.Manager` existing |
 
 **Kesimpulan**: top-level `roslib.NewManagerFromConfig` / `NewManagerFromFleet` sekarang menjamin **1 router fisik = 1 login** sepanjang lifetime aplikasi. Caller yang re-acquire device by-name (pola HTTP handler, scheduler, dst.) tidak lagi membanjiri MikroTik log dengan login/logout entries.
+
+---
+
+## Iterasi-5 — Cleanup: hapus capability validator, strict flag, deprecated constructors (16 Mei 2026)
+
+### Konteks
+
+Setelah Iter 1-4, library punya cognitive surface besar:
+
+- `capability/` package + JSON registry 2.6 MB di-embed (versi-spesifik, MikroTik berubah field/path per release → maintenance burden tinggi)
+- `StrictCapability` flag (strict vs warn) — kompleksitas konfigurasi tambahan tanpa value tinggi
+- Dua gaya konstruktor (`NewFromConfig` lama vs `NewManagerFromConfig` baru) — pilihan ganda
+
+User keputusan: hapus semuanya. Library terima sentence apa adanya, router yang validate (~5ms RTT extra untuk command invalid).
+
+### Apa yang dihapus
+
+| Kategori | Jumlah |
+|---|---|
+| Package | 1 (`capability/` — registry.go, loader.go, streaming.go, registry_test.go) |
+| Embedded asset | 1 file (`routeros_7.20.8.json` 2.6 MB) |
+| Source files | 2 (`builder/validate.go`, `device/validation.go`) |
+| Top-level constructors deprecated | 3 (`NewFromConfig` lama, `NewFleet` lama, `CloseAll`) |
+| Fields struct | 4 (`Options.Registry`, `Options.StrictCapability`, `Config.StrictCapability`, `Config.RegistryPath`) + `FleetConfig.StrictCapability` + `FleetConfig.RegistryPath` |
+| Env vars | 2 (`ROSLIB_STRICT_CAPABILITY`, `ROSLIB_REGISTRY_PATH`) |
+| Executor methods | 2 (`Registry()`, `Strict()`) |
+| Validator hooks | 4 (`validatePrint`, `validateMutation`, `validatePollConfig`, `validateStreamSpec`) |
+| Integration scenarios | 3 (`CAPABILITY`, `CAPABILITY/MISUSE`, `CAPABILITY/UNKNOWN-ARG`) |
+| Unit tests | ~5 capability + strict tests |
+
+### Apa yang di-rename
+
+- `roslib.NewManagerFromConfig` → `roslib.NewFromConfig` (mengambil nama yang dibebaskan)
+- `roslib.NewManagerFromFleet` → `roslib.NewFleet`
+
+API sekarang punya **3 entry point** (turun dari 6):
+- `roslib.NewFromConfig(ctx, cfg, log)` → `*Manager` single-router
+- `roslib.NewFleet(ctx, fleetCfg, log)` → `*Manager` multi-router
+- `roslib.NewManager()` → `*Manager` kosong (manual register)
+
+Plus low-level `roslib.New(ctx, opts)` untuk konstruksi 1 device tanpa Manager.
+
+### Binary size impact
+
+```
+BEFORE: 30,832,674 bytes (30 MB)
+AFTER:  28,023,108 bytes (27 MB)
+DELTA:  -2,809,566 bytes (-2.68 MB, -9.1%)
+```
+
+Pengurangan ~2.6 MB sesuai prediksi dari hapus JSON registry embed.
+
+### Verifikasi build + unit test
+
+```
+go vet ./... ✓
+go build ./... ✓
+go build -tags=redis ./... ✓
+go build -tags=example ./examples/... ✓
+go test -race -count=1 ./... → 51 passed in 13 packages
+```
+
+Turun dari 56 passed (Iter-4) karena 5 capability/strict tests dihapus. Tidak ada regression.
+
+### Live integration
+
+```
+17 ✓ / 0 ✗ / 0 ⚠ — semua scenario non-capability tetap hijau
+
+✓ BOOT, PRINT/EXEC, PRINT/DETAIL, CACHE/IN-MEMORY,
+✓ STREAM/MONITOR-TRAFFIC, RUN/PING-V7, EXEC-CACHED,
+✓ STREAM/LOG-FOLLOW, POLL/INFLUX, READER/QUERY,
+✓ STREAM/INTERVAL, STREAM/NO-FLAG, CACHE/INVALIDATE-LIVE,
+✓ FLEET/SMOKE, PERSIST/REUSE, STREAM/FINITE-CLEANUP,
+✓ COMBO/CACHE+INFLUX+FLEET
+```
+
+Turun 3 scenario dari Iter-4 (20 → 17), expected karena `CAPABILITY`, `CAPABILITY/MISUSE`, `CAPABILITY/UNKNOWN-ARG` dihapus.
+
+### Trade-off
+
+| Aspek | Before | After |
+|---|---|---|
+| Catch typo command/arg sebelum kirim | ✓ (validator) | ✗ (router yang reject ~5ms RTT) |
+| Version drift maintenance | regenerate JSON per RouterOS release | 0 (delegate ke router) |
+| Binary size | 30 MB | 27 MB |
+| API constructors | 6 (3 deprecated + 3 manager) | 3 |
+| Env vars | 14+ | 12 |
+| Cognitive surface | tinggi (Registry/Class/Action/Strict + RegistryPath + 2 gaya konstruktor) | rendah |
+
+### Final stats Iterasi-5
+
+| Metric | Value |
+|---|---|
+| Unit test (race-clean) | **51/51 passed** in 13 packages |
+| Integration scenarios | **17/17 passed** (0 fail, 0 warn) |
+| Binary size reduction | **-2.68 MB (-9.1%)** |
+| API breaking change | **Yes** — `Options.Registry`, `Options.StrictCapability` removed; `NewManagerFromConfig` renamed; `capability` package gone |
+| Dependencies removed | 0 (capability package internal, no external dep dropped) |
+
+**Library lebih kurus, lebih mudah dipakai, lebih sedikit maintenance debt.**

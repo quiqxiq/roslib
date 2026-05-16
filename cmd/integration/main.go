@@ -14,7 +14,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/quiqxiq/roslib"
 	"github.com/quiqxiq/roslib/cache"
-	"github.com/quiqxiq/roslib/capability"
 	"github.com/quiqxiq/roslib/config"
 	"github.com/quiqxiq/roslib/decode"
 	"github.com/quiqxiq/roslib/metrics/influx"
@@ -42,13 +40,13 @@ func main() {
 	if err != nil {
 		fatal("config load: %v", err)
 	}
-	fmt.Printf("    router=%s influx=%v cache=%v strict=%v\n",
-		cfg.Router.Address, cfg.Influx.Enabled, cfg.Cache.Enabled, cfg.StrictCapability)
+	fmt.Printf("    router=%s influx=%v cache=%v\n",
+		cfg.Router.Address, cfg.Influx.Enabled, cfg.Cache.Enabled)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr, influxCli, err := roslib.NewManagerFromConfig(ctx, cfg, log)
+	mgr, influxCli, err := roslib.NewFromConfig(ctx, cfg, log)
 	if err != nil {
 		fatal("device dial: %v", err)
 	}
@@ -60,29 +58,7 @@ func main() {
 	if derr != nil {
 		fatal("manager Get(%q): %v", roslib.DefaultDeviceKey, derr)
 	}
-	pass("BOOT", "device connected via Manager, registry loaded, influx ready=%v", influxCli != nil)
-
-	// ── Capability registry ───────────────────────────────────────────
-	step("CAPABILITY", "verify registry contents")
-	reg, _ := capability.Default()
-	cases := []struct {
-		word string
-		want capability.Class
-	}{
-		{"/interface/monitor-traffic", capability.ClassStreaming},
-		{"/tool/ping", capability.ClassStreaming},
-		{"/log/print", capability.ClassStreamablePrint},
-		{"/ip/address/add", capability.ClassMutation},
-	}
-	for _, tc := range cases {
-		c, lerr := reg.Lookup(tc.word)
-		if lerr != nil || c.Class != tc.want {
-			fail("CAPABILITY", "%s expected=%s got=%v err=%v", tc.word, tc.want, classOf(c), lerr)
-			continue
-		}
-		fmt.Printf("    %s → %s (args=%d) ✓\n", tc.word, c.Class, len(c.Args))
-	}
-	pass("CAPABILITY", "all 4 classifications correct (registry version %s)", reg.Version)
+	pass("BOOT", "device connected via Manager, influx ready=%v", influxCli != nil)
 
 	// ── Print Exec ────────────────────────────────────────────────────
 	step("PRINT/EXEC", "/ip/address/print")
@@ -116,37 +92,6 @@ func main() {
 			r.Get("board-name"), r.Get("version"), uptime, cpu, freeMem, totalMem)
 	}
 
-	// ── Capability misuse (Exec di path streaming) ───────────────────
-	step("CAPABILITY/MISUSE", "expect any capability error for /interface/monitor-traffic Exec()")
-	_, err = dev.Path("/interface/monitor-traffic").Print().Exec(ctx)
-	if err == nil {
-		fail("CAPABILITY/MISUSE", "expected capability error, got nil")
-	} else {
-		var ic *capability.ErrInvalidClass
-		var uc *capability.ErrUnknownCommand
-		switch {
-		case errors.As(err, &ic):
-			pass("CAPABILITY/MISUSE", "rejected (class mismatch): %v", err)
-		case errors.As(err, &uc):
-			pass("CAPABILITY/MISUSE", "rejected (no /print under streaming path): %v", err)
-		default:
-			fail("CAPABILITY/MISUSE", "got error but wrong type: %v", err)
-		}
-	}
-
-	// ── Capability misuse (arg tidak dikenal) ────────────────────────
-	step("CAPABILITY/UNKNOWN-ARG", "expect error for typo in Where")
-	_, err = dev.Path("/ip/address").Print().Where("addres", "x").Exec(ctx)
-	if err == nil {
-		fail("CAPABILITY/UNKNOWN-ARG", "expected ErrUnknownArg, got nil")
-	} else {
-		var ua *capability.ErrUnknownArg
-		if errors.As(err, &ua) {
-			pass("CAPABILITY/UNKNOWN-ARG", "rejected: %v", err)
-		} else {
-			fail("CAPABILITY/UNKNOWN-ARG", "got error but wrong type: %v", err)
-		}
-	}
 
 	// ── Cache (ExecCached hit) ───────────────────────────────────────
 	step("CACHE/IN-MEMORY", "two ExecCached calls → second should hit cache")
@@ -237,10 +182,8 @@ func main() {
 	// Inject InMemoryCache via runtime swap of Cache pointer. Karena
 	// Cache di-set saat New, kita re-dial dengan opsi baru.
 	cachedOpts := cfg.ToDeviceOptions(log)
-	cachedOpts.Registry, _ = capability.Default()
 	cachedOpts.Cache = cache.NewInMemory()
 	cachedOpts.CacheTTL = 30 * time.Second
-	cachedOpts.StrictCapability = true
 	if rerr := mgr.Register(ctx, "exec-cached-test", cachedOpts); rerr != nil {
 		fail("EXEC-CACHED", "%v", rerr)
 	} else {
@@ -393,10 +336,8 @@ func main() {
 	step("CACHE/INVALIDATE-LIVE", "ExecCached × 2 → invalidate → ExecCached miss again")
 	invCache := cache.NewInMemory()
 	invOpts := cfg.ToDeviceOptions(log)
-	invOpts.Registry, _ = capability.Default()
 	invOpts.Cache = invCache
 	invOpts.CacheTTL = time.Hour
-	invOpts.StrictCapability = true
 	invOpts.ID = "test-inv"
 	if rerr := mgr.Register(ctx, "invalidate-test", invOpts); rerr != nil {
 		fail("CACHE/INVALIDATE-LIVE", "dial: %v", rerr)
@@ -423,14 +364,14 @@ func main() {
 	}
 
 	// ── Fleet smoke: load .env user (ROSLIB_ROUTERS=...) → dial semua ──
-	step("FLEET/SMOKE", "NewManagerFromFleet dari .env (multi-router) — verifikasi pool+CloseAll")
+	step("FLEET/SMOKE", "NewFleet dari .env (multi-router) — verifikasi pool+CloseAll")
 	fleetCfg, ferr := config.LoadFleetFromEnv()
 	if ferr != nil {
 		warn("FLEET/SMOKE", "load: %v (skip)", ferr)
 	} else {
-		fleetMgr, _, fferr := roslib.NewManagerFromFleet(ctx, fleetCfg, log)
+		fleetMgr, _, fferr := roslib.NewFleet(ctx, fleetCfg, log)
 		if fferr != nil {
-			fail("FLEET/SMOKE", "NewManagerFromFleet: %v", fferr)
+			fail("FLEET/SMOKE", "NewFleet: %v", fferr)
 		} else {
 			ids := fleetMgr.Names()
 			labels := make([]string, 0, len(ids))
@@ -558,9 +499,9 @@ func lenSafe(c *config.FleetConfig) int {
 }
 
 func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.FleetConfig) {
-	mgr, influxCli, ferr := roslib.NewManagerFromFleet(ctx, fleetCfg, log)
+	mgr, influxCli, ferr := roslib.NewFleet(ctx, fleetCfg, log)
 	if ferr != nil {
-		fail("COMBO/CACHE+INFLUX+FLEET", "NewManagerFromFleet: %v", ferr)
+		fail("COMBO/CACHE+INFLUX+FLEET", "NewFleet: %v", ferr)
 		return
 	}
 	defer mgr.CloseAll()
@@ -569,7 +510,7 @@ func runComboScenario(ctx context.Context, log *logrus.Logger, fleetCfg *config.
 	}
 	ids := mgr.Names()
 
-	// Cache shared antar device. NewManagerFromFleet sudah pasang InMemoryCache
+	// Cache shared antar device. NewFleet sudah pasang InMemoryCache
 	// di Options tiap device. Ambil dari device pertama untuk inspect Stats().
 	var shared *cache.InMemoryCache
 	for _, id := range ids {
@@ -731,11 +672,4 @@ func warn(name, format string, args ...any) {
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "FATAL: "+format+"\n", args...)
 	os.Exit(1)
-}
-
-func classOf(c *capability.Command) string {
-	if c == nil {
-		return "<nil>"
-	}
-	return c.Class.String()
 }

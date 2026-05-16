@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-routeros/routeros/v3"
 	"github.com/quiqxiq/roslib/cache"
-	"github.com/quiqxiq/roslib/capability"
 	"github.com/quiqxiq/roslib/decode"
 	"github.com/quiqxiq/roslib/stream"
 	"github.com/sirupsen/logrus"
@@ -18,9 +17,7 @@ import (
 // merekam sentence yang dikirim & spec yang di-register tanpa benar-benar
 // menyentuh router.
 type fakeExecutor struct {
-	registry *capability.Registry
-	c        cache.Cache
-	strict   bool
+	c cache.Cache
 
 	runCalls    [][]string
 	streamSpecs []stream.Spec
@@ -29,16 +26,10 @@ type fakeExecutor struct {
 	deviceID string
 }
 
-func newFakeExecutor(t *testing.T, strict bool) *fakeExecutor {
+func newFakeExecutor(t *testing.T) *fakeExecutor {
 	t.Helper()
-	reg, err := capability.Default()
-	if err != nil {
-		t.Fatalf("load registry: %v", err)
-	}
 	return &fakeExecutor{
-		registry: reg,
 		c:        cache.NoopCache{},
-		strict:   strict,
 		deviceID: "test-device",
 	}
 }
@@ -55,17 +46,15 @@ func (f *fakeExecutor) UnregisterStream(id string) bool {
 	f.cancelIDs = append(f.cancelIDs, id)
 	return true
 }
-func (f *fakeExecutor) Registry() *capability.Registry { return f.registry }
-func (f *fakeExecutor) Cache() cache.Cache             { return f.c }
-func (f *fakeExecutor) CacheTTL() time.Duration        { return 0 }
-func (f *fakeExecutor) Strict() bool                   { return f.strict }
-func (f *fakeExecutor) Logger() *logrus.Entry          { return logrus.NewEntry(logrus.New()) }
-func (f *fakeExecutor) DeviceID() string               { return f.deviceID }
+func (f *fakeExecutor) Cache() cache.Cache      { return f.c }
+func (f *fakeExecutor) CacheTTL() time.Duration { return 0 }
+func (f *fakeExecutor) Logger() *logrus.Entry   { return logrus.NewEntry(logrus.New()) }
+func (f *fakeExecutor) DeviceID() string        { return f.deviceID }
 
 // ──────────────── tests ────────────────
 
 func TestPrintBuilderStreamRequiresFlag(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	pb := New(ex, "/queue/simple").Print().Stats()
 	// StreamBuilder tidak punya .Stream() public di chain ini — kita
 	// harus dapat StreamBuilder dulu lewat Follow/FollowOnly/Interval.
@@ -78,7 +67,7 @@ func TestPrintBuilderStreamRequiresFlag(t *testing.T) {
 }
 
 func TestPrintBuilderIntervalStream(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	dev := New(ex, "/queue/simple")
 	err := dev.Print().Stats().Interval(time.Second).Stream("q", func(s *decode.Sentence) {})
 	if err != nil {
@@ -100,7 +89,7 @@ func TestPrintBuilderIntervalStream(t *testing.T) {
 }
 
 func TestPrintBuilderFollowAndInterval(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	dev := New(ex, "/ip/firewall/filter")
 	err := dev.Print().Follow().Interval(2 * time.Second).Stream("fw", func(s *decode.Sentence) {})
 	if err != nil {
@@ -116,7 +105,7 @@ func TestPrintBuilderFollowAndInterval(t *testing.T) {
 }
 
 func TestPrintBuilderFollowOnlyStream(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	dev := New(ex, "/log")
 	err := dev.Print().FollowOnly().Stream("log", func(s *decode.Sentence) {})
 	if err != nil {
@@ -132,7 +121,7 @@ func TestPrintBuilderFollowOnlyStream(t *testing.T) {
 }
 
 func TestPrintBuilderProplist(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	pb := New(ex, "/ip/address").Print().Proplist("address", "interface")
 	sentence := pb.command()
 	found := false
@@ -182,7 +171,7 @@ func hasArg(args []string, target string) bool {
 // stream cleanup — router akan kirim !done setelah count habis, lalu
 // Manager.consume() harus auto-hapus entry.
 func TestPathBuilderStreamWithCount(t *testing.T) {
-	ex := newFakeExecutor(t, false) // /tool/ping inherent-streaming, registry mungkin v7 vs v6 → non-strict
+	ex := newFakeExecutor(t) // /tool/ping inherent-streaming, registry mungkin v7 vs v6 → non-strict
 	err := New(ex, "/tool/ping").
 		With("address", "8.8.8.8").
 		With("count", "5").
@@ -212,7 +201,7 @@ func TestPathBuilderStreamWithCount(t *testing.T) {
 // TestPathBuilderStreamWithDuration verifikasi torch finite-stream
 // dengan duration=2s.
 func TestPathBuilderStreamWithDuration(t *testing.T) {
-	ex := newFakeExecutor(t, false)
+	ex := newFakeExecutor(t)
 	err := New(ex, "/tool/torch").
 		With("interface", "ether1").
 		With("duration", "2s").
@@ -234,7 +223,7 @@ func TestPathBuilderStreamWithDuration(t *testing.T) {
 // memang ter-pasang ke Spec — supaya Manager.consume() bisa fire callback
 // saat !done tiba.
 func TestPathBuilderOnFinishWired(t *testing.T) {
-	ex := newFakeExecutor(t, false)
+	ex := newFakeExecutor(t)
 	called := false
 	cb := func(id string, err error) { called = true }
 
@@ -260,7 +249,7 @@ func TestPathBuilderOnFinishWired(t *testing.T) {
 // TestStreamBuilderOnFinishWired verifikasi OnFinish() di StreamBuilder
 // (print+interval/follow) ter-pasang ke Spec.
 func TestStreamBuilderOnFinishWired(t *testing.T) {
-	ex := newFakeExecutor(t, true)
+	ex := newFakeExecutor(t)
 	called := false
 	cb := func(id string, err error) { called = true }
 

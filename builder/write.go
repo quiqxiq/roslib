@@ -10,9 +10,6 @@ import (
 // Add menjalankan command "/path/add" dengan named pairs sebagai parameter.
 func (b *PathBuilder) Add(ctx context.Context, pairs ...query.Pair) (*routeros.Reply, error) {
 	sentence := query.BuildSentence(b.path+"/add", nil, pairs, nil)
-	if err := validateMutation(b.exec, sentence, nil, pairs, nil); err != nil {
-		return nil, err
-	}
 	return b.exec.RunCommand(ctx, sentence)
 }
 
@@ -24,9 +21,6 @@ func (b *PathBuilder) Set(ctx context.Context, numbers string, pairs ...query.Pa
 		all = append([]query.Pair{query.NewPair("numbers", numbers)}, all...)
 	}
 	sentence := query.BuildSentence(b.path+"/set", nil, all, nil)
-	if err := validateMutation(b.exec, sentence, nil, all, nil); err != nil {
-		return nil, err
-	}
 	return b.exec.RunCommand(ctx, sentence)
 }
 
@@ -34,9 +28,6 @@ func (b *PathBuilder) Set(ctx context.Context, numbers string, pairs ...query.Pa
 func (b *PathBuilder) Remove(ctx context.Context, numbers string) (*routeros.Reply, error) {
 	pairs := []query.Pair{query.NewPair("numbers", numbers)}
 	sentence := query.BuildSentence(b.path+"/remove", nil, pairs, nil)
-	if err := validateMutation(b.exec, sentence, nil, pairs, nil); err != nil {
-		return nil, err
-	}
 	return b.exec.RunCommand(ctx, sentence)
 }
 
@@ -53,22 +44,13 @@ func (b *PathBuilder) Disable(ctx context.Context, numbers string) (*routeros.Re
 func (b *PathBuilder) toggle(ctx context.Context, action, numbers string) (*routeros.Reply, error) {
 	pairs := []query.Pair{query.NewPair("numbers", numbers)}
 	sentence := query.BuildSentence(b.path+"/"+action, nil, pairs, nil)
-	if err := validateMutation(b.exec, sentence, nil, pairs, nil); err != nil {
-		return nil, err
-	}
 	return b.exec.RunCommand(ctx, sentence)
 }
 
 // Run mengeksekusi sentence apapun pada path ini secara langsung.
 // Berguna untuk command yang tidak punya helper khusus, mis. "ping" atau
 // "monitor-once". Action adalah kata setelah path (tanpa "/" awal).
-//
-// Validasi: command word harus terdaftar dan args dikenal. Class tidak
-// di-restrict — caller bertanggung jawab memilih method yang tepat.
 func (b *PathBuilder) Run(ctx context.Context, action string, pairs ...query.Pair) (*routeros.Reply, error) {
 	sentence := query.BuildSentence(b.path+"/"+action, nil, pairs, nil)
-	if err := validateRun(b.exec, sentence, nil, pairs, nil); err != nil {
-		return nil, err
-	}
 	return b.exec.RunCommand(ctx, sentence)
 }

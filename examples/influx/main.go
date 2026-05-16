@@ -40,7 +40,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	mgr, ifc, err := roslib.NewManagerFromConfig(ctx, cfg, logger)
+	mgr, ifc, err := roslib.NewFromConfig(ctx, cfg, logger)
 	if err != nil {
 		log.Fatal(err)
 	}

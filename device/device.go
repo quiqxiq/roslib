@@ -9,7 +9,6 @@ import (
 	"github.com/go-routeros/routeros/v3"
 	"github.com/quiqxiq/roslib/builder"
 	"github.com/quiqxiq/roslib/cache"
-	"github.com/quiqxiq/roslib/capability"
 	"github.com/quiqxiq/roslib/poll"
 	"github.com/quiqxiq/roslib/stream"
 	"github.com/sirupsen/logrus"
@@ -150,18 +149,11 @@ func (d *RouterDevice) Path(path string) *builder.PathBuilder {
 
 // ──────────────── builder.Executor interface ────────────────
 
-// Registry mengembalikan capability registry yang di-inject lewat Options.
-// nil kalau tidak di-set — builder akan skip validasi.
-func (d *RouterDevice) Registry() *capability.Registry { return d.opts.Registry }
-
 // Cache mengembalikan instance cache (NoopCache kalau disabled).
 func (d *RouterDevice) Cache() cache.Cache { return d.opts.Cache }
 
 // CacheTTL adalah default TTL untuk ExecCached saat caller pakai 0.
 func (d *RouterDevice) CacheTTL() time.Duration { return d.opts.CacheTTL }
-
-// Strict melaporkan apakah validator dalam strict mode (error vs log-warn).
-func (d *RouterDevice) Strict() bool { return d.opts.StrictCapability }
 
 // DeviceID identifier device untuk scope cache.
 // Pakai Options.ID kalau di-set, fallback ke Address.
@@ -198,18 +190,8 @@ func (d *RouterDevice) Streams() *stream.Manager { return d.streams }
 // Polls mengembalikan PollEngine untuk operasi poll.
 func (d *RouterDevice) Polls() *poll.Engine { return d.polls }
 
-// RegisterPoll meneruskan ke PollEngine setelah validasi capability.
-//
-// Validasi:
-//   - command word valid di registry
-//   - Class != Streaming (poll one-shot, bukan listener)
-//   - semua arg/pair/where dikenal
-//
-// Strict=false → log-warn, command tetap dijalankan.
+// RegisterPoll meneruskan ke PollEngine.
 func (d *RouterDevice) RegisterPoll(cfg poll.Config) error {
-	if err := d.validatePollConfig(cfg); err != nil {
-		return err
-	}
 	return d.polls.Register(cfg)
 }
 
@@ -218,13 +200,8 @@ func (d *RouterDevice) UnregisterPoll(id string) bool {
 	return d.polls.Unregister(id)
 }
 
-// RegisterStream meneruskan ke StreamManager setelah validasi.
-//
-// Validasi: command word valid; Class ∈ {Streaming, StreamablePrint}.
+// RegisterStream meneruskan ke StreamManager.
 func (d *RouterDevice) RegisterStream(spec stream.Spec) error {
-	if err := d.validateStreamSpec(spec); err != nil {
-		return err
-	}
 	return d.streams.Register(spec)
 }
 

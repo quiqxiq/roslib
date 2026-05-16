@@ -115,9 +115,6 @@ type Reply struct {
 // Exec mengirim print sekali dan tunggu reply (snapshot, bukan follow).
 func (p *PrintBuilder) Exec(ctx context.Context) (*Reply, error) {
 	sentence := p.command()
-	if err := validatePrint(p.exec, sentence, p.flags, p.pairs, p.where); err != nil {
-		return nil, err
-	}
 	raw, err := p.exec.RunCommand(ctx, sentence)
 	if err != nil {
 		return nil, err
@@ -135,9 +132,6 @@ func (p *PrintBuilder) Exec(ctx context.Context) (*Reply, error) {
 // (selalu miss → selalu hit router).
 func (p *PrintBuilder) ExecCached(ctx context.Context, ttl time.Duration) (*Reply, error) {
 	sentence := p.command()
-	if err := validatePrint(p.exec, sentence, p.flags, p.pairs, p.where); err != nil {
-		return nil, err
-	}
 	c := p.exec.Cache()
 	key := cache.KeyOf(p.exec.DeviceID(), sentence)
 

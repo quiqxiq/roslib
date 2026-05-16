@@ -1,5 +1,8 @@
 # roslib — Planning Arsitektur (Revisi)
 
+> **Iterasi-5 (16 Mei 2026):** capability registry + `StrictCapability` flag DIHAPUS sepenuhnya. MikroTik berubah field/path per versi sehingga registry-based validator jadi maintenance burden tanpa value tinggi. Library sekarang terima sentence apa adanya — router yang validate. Konsekuensi: section yang menyebut `capability/`, `StrictCapability`, `Registry`, `RegistryPath`, env `ROSLIB_STRICT_CAPABILITY`/`ROSLIB_REGISTRY_PATH` **tidak berlaku lagi**. Top-level API disederhanakan: `NewFromConfig` & `NewFleet` sekarang return `*Manager` (bukan `*Device`/`map`); deprecated `CloseAll` dihapus. Lihat `docs/integration-report.md` seksi Iterasi-5 untuk impact lengkap.
+
+
 Library wrapper di atas `github.com/go-routeros/routeros/v3` untuk akses MikroTik RouterOS, dirancang khusus untuk memanfaatkan **async mode + tag-based multiplexing** secara penuh sehingga overhead koneksi minimal dan throughput command maksimal.
 
 ---

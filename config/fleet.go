@@ -13,16 +13,13 @@ type RouterEntry struct {
 	RouterConfig
 }
 
-// FleetConfig adalah konfigurasi multi-router. Cache + Influx + behavior
-// flag di-share antar router.
+// FleetConfig adalah konfigurasi multi-router. Cache + Influx di-share
+// antar router.
 type FleetConfig struct {
 	Routers []RouterEntry
 
 	Cache  CacheConfig
 	Influx InfluxConfig
-
-	StrictCapability bool
-	RegistryPath     string
 }
 
 // LoadFleetFromEnv membaca env scheme multi-router:
@@ -56,8 +53,6 @@ func LoadFleetFromEnv() (*FleetConfig, error) {
 	if shared != nil {
 		cfg.Cache = shared.Cache
 		cfg.Influx = shared.Influx
-		cfg.StrictCapability = shared.StrictCapability
-		cfg.RegistryPath = shared.RegistryPath
 	}
 
 	for _, id := range ids {

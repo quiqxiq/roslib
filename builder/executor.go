@@ -16,7 +16,6 @@ import (
 
 	"github.com/go-routeros/routeros/v3"
 	"github.com/quiqxiq/roslib/cache"
-	"github.com/quiqxiq/roslib/capability"
 	"github.com/quiqxiq/roslib/stream"
 	"github.com/sirupsen/logrus"
 )
@@ -28,14 +27,11 @@ import (
 //  1. Mengirim command satu-shot (RunCommand).
 //  2. Mendaftarkan listener jangka panjang (RegisterStream).
 //  3. Membatalkan listener (UnregisterStream).
-//  4. Akses ke registry+cache+config untuk validasi & caching.
+//  4. Akses cache untuk ExecCached.
 type Executor interface {
 	RunCommand(ctx context.Context, sentence []string) (*routeros.Reply, error)
 	RegisterStream(spec stream.Spec) error
 	UnregisterStream(id string) bool
-
-	// Registry mengembalikan capability registry. nil → builder skip validasi.
-	Registry() *capability.Registry
 
 	// Cache mengembalikan instance Cache (NoopCache kalau disabled).
 	Cache() cache.Cache
@@ -43,10 +39,7 @@ type Executor interface {
 	// CacheTTL adalah default TTL untuk ExecCached saat caller pakai 0.
 	CacheTTL() time.Duration
 
-	// Strict melaporkan mode validator (true=error, false=log-warn).
-	Strict() bool
-
-	// Logger untuk log-warn saat strict=false.
+	// Logger akses ke logger device.
 	Logger() *logrus.Entry
 
 	// DeviceID identifier unik device — dipakai untuk scope key cache

@@ -17,7 +17,6 @@ Dokumentasi penggunaan per fitur. Bukan API reference (lihat `go doc github.com/
 - [Cache (InMemory / Redis)](#cache-inmemory--redis)
 - [Cache invalidation](#cache-invalidation)
 - [Sink ke InfluxDB3](#sink-ke-influxdb3)
-- [Capability validator: strict vs warn vs override](#capability-validator-strict-vs-warn-vs-override)
 - [Auto-reconnect & lifecycle](#auto-reconnect--lifecycle)
 - [Decoding sentence (typed accessor)](#decoding-sentence-typed-accessor)
 - [Debugging tips](#debugging-tips)
@@ -39,11 +38,10 @@ import (
 
 func connect() (*roslib.Device, error) {
     return roslib.New(context.Background(), roslib.Options{
-        Address:          "192.168.88.1:8728",
-        Username:         "admin",
-        Password:         "secret",
-        Logger:           logrus.New(),
-        StrictCapability: true,
+        Address:  "192.168.88.1:8728",
+        Username: "admin",
+        Password: "secret",
+        Logger:   logrus.New(),
     })
 }
 ```
@@ -54,7 +52,7 @@ func connect() (*roslib.Device, error) {
 
 ## Loading konfigurasi
 
-Library punya loader env stdlib. **Rekomendasi pakai `NewManagerFromConfig`** — Manager memegang koneksi persisten by-name, sehingga acquire ulang tidak re-dial:
+Library punya loader env stdlib. **Rekomendasi pakai `NewFromConfig`** — Manager memegang koneksi persisten by-name, sehingga acquire ulang tidak re-dial:
 
 ```go
 import "github.com/quiqxiq/roslib/config"
@@ -62,20 +60,13 @@ import "github.com/quiqxiq/roslib/config"
 cfg, err := config.LoadFromEnv()
 if err != nil { ... }
 
-mgr, influxCli, err := roslib.NewManagerFromConfig(ctx, cfg, logger)
+mgr, influxCli, err := roslib.NewFromConfig(ctx, cfg, logger)
 if err != nil { ... }
 defer mgr.CloseAll()
 if influxCli != nil { defer influxCli.Close() }
 
 dev, _ := mgr.Get(roslib.DefaultDeviceKey)
 // pemanggilan ulang mgr.Get(...) reuse pointer yang sama — 0 login tambahan
-```
-
-Pola lama (deprecated, tetap kerja) — `NewFromConfig` return `*Device` mentah, caller harus tracking lifecycle sendiri:
-
-```go
-dev, influxCli, err := roslib.NewFromConfig(ctx, cfg, logger) // deprecated
-defer dev.Close()
 ```
 
 Env yang dibaca (lihat `.env.example`):
@@ -92,8 +83,6 @@ Env yang dibaca (lihat `.env.example`):
 | `ROSLIB_RECONNECT_INITIAL` | `500ms` | initial backoff |
 | `ROSLIB_RECONNECT_MAX` | `30s` | max backoff |
 | `ROSLIB_RECONNECT_MAX_ELAPSED` | `0` | 0 = retry selamanya |
-| `ROSLIB_STRICT_CAPABILITY` | `true` | false = log-warn |
-| `ROSLIB_REGISTRY_PATH` | (kosong) | path override JSON registry |
 | `ROSLIB_CACHE_ENABLED` | `false` | |
 | `ROSLIB_CACHE_ADDR` | (kosong) | `host:port` Redis |
 | `ROSLIB_CACHE_PASSWORD` | (kosong) | |
@@ -128,20 +117,20 @@ ROSLIB_ROUTER_OFFICE_GW_ADDRESS=10.0.0.1:8728   # "office-gw" → OFFICE_GW di e
 ROSLIB_ROUTER_OFFICE_GW_USERNAME=admin
 ROSLIB_ROUTER_OFFICE_GW_PASSWORD=secret
 
-# Cache/Influx/strict toggle tetap shared (lihat single-router env).
+# Cache/Influx toggle tetap shared (lihat single-router env).
 ```
 
 ID dash di-translate ke underscore di nama env: `office-gw` → `ROSLIB_ROUTER_OFFICE_GW_*`.
 
 ### Konstruksi
 
-Rekomendasi pakai `NewManagerFromFleet` — semua router di-register ke satu Manager, acquire ulang tidak re-dial:
+Rekomendasi pakai `NewFleet` — semua router di-register ke satu Manager, acquire ulang tidak re-dial:
 
 ```go
 import "github.com/quiqxiq/roslib/config"
 
 fleetCfg, _ := config.LoadFleetFromEnv()
-mgr, influxCli, _ := roslib.NewManagerFromFleet(ctx, fleetCfg, logger)
+mgr, influxCli, _ := roslib.NewFleet(ctx, fleetCfg, logger)
 defer mgr.CloseAll()
 if influxCli != nil { defer influxCli.Close() }
 
@@ -159,13 +148,6 @@ for _, id := range mgr.Names() {
 }
 ```
 
-Pola lama (deprecated, tetap kerja) — `NewFleet` return `map[string]*Device`:
-
-```go
-fleet, influxCli, _ := roslib.NewFleet(ctx, fleetCfg, logger) // deprecated
-defer roslib.CloseAll(fleet)
-```
-
 ### Cache + multi-router
 
 Cache instance dibagi antar router (kalau enabled). Key cache otomatis di-prefix dengan device ID, jadi sentence yang sama dari dua router tidak konflik. Pemeriksaan ada di `TestExecCachedDeviceScoping`.
@@ -177,18 +159,18 @@ roslib:rb2:<hash>   ← cache untuk rb2, isi bisa berbeda
 
 ### Atomic dial
 
-`NewManagerFromFleet` dial semua router sekuensial. Kalau satu gagal, semua yang sudah berhasil di-close (rollback) dan return error. Caller yang butuh "best-effort" (skip router yang gagal) boleh konstruk `Manager` kosong lewat `roslib.NewManager()` lalu `Register` per router dengan error handling sendiri.
+`NewFleet` dial semua router sekuensial. Kalau satu gagal, semua yang sudah berhasil di-close (rollback) dan return error. Caller yang butuh "best-effort" (skip router yang gagal) boleh konstruk `Manager` kosong lewat `roslib.NewManager()` lalu `Register` per router dengan error handling sendiri.
 
 ---
 
 ## Persistent connection via Manager
 
-`*device.RouterDevice` sudah persistent secara internal (2 koneksi async + supervisor reconnect), tapi setiap panggilan `device.New` atau `roslib.New[FromConfig]` membuka sesi baru di MikroTik. Untuk service yang sering re-acquire device (mis. HTTP handler yang pegang ID router dari path), pakai Manager supaya 1 router = 1 login sepanjang umur aplikasi.
+`*device.RouterDevice` sudah persistent secara internal (2 koneksi async + supervisor reconnect), tapi setiap panggilan `device.New` atau `roslib.New` membuka sesi baru di MikroTik. Untuk service yang sering re-acquire device (mis. HTTP handler yang pegang ID router dari path), pakai Manager supaya 1 router = 1 login sepanjang umur aplikasi.
 
 ### Pola dasar
 
 ```go
-mgr, influxCli, _ := roslib.NewManagerFromConfig(ctx, cfg, log)
+mgr, influxCli, _ := roslib.NewFromConfig(ctx, cfg, log)
 defer mgr.CloseAll()
 
 // Setiap HTTP request misalnya:
@@ -236,7 +218,7 @@ cmdDev, _    := mgr.Get(cmdKey)
 mutDev, _    := mgr.Get(mutKey)
 ```
 
-Tiap key = `RouterDevice` independen dengan 2 koneksi internal sendiri (jadi 6 koneksi total ke router fisik yang sama). Tidak otomatis — Manager hanya menyediakan key namespace. Default `NewManagerFromConfig` / `NewManagerFromFleet` hanya register 1 device per router.
+Tiap key = `RouterDevice` independen dengan 2 koneksi internal sendiri (jadi 6 koneksi total ke router fisik yang sama). Tidak otomatis — Manager hanya menyediakan key namespace. Default `NewFromConfig` / `NewFleet` hanya register 1 device per router.
 
 ---
 
@@ -310,8 +292,6 @@ _, err = dev.Path("/interface").Enable(ctx, "ether2")
 _, err = dev.Path("/interface").Disable(ctx, "ether2")
 ```
 
-Validasi strict: command harus berkelas `Mutation` di registry. Misuse (mis. memanggil `Add` pada path streaming) langsung ditolak.
-
 Untuk command yang tidak punya helper khusus, pakai `Run`:
 
 ```go
@@ -323,7 +303,7 @@ reply, err := dev.Path("/system/script").Run(ctx, "run",
 
 ## Streaming (Listener)
 
-Library punya **dua jalur streaming**, sesuai class di registry:
+Library punya **dua jalur streaming**:
 
 ### Print-follow (log, table-snapshot + delta)
 
@@ -700,53 +680,6 @@ iter, _ := reader.Query(ctx, "SELECT * FROM measurement",
 
 ---
 
-## Capability validator: strict vs warn vs override
-
-Library punya registry **RouterOS 7.20.8** yang di-embed (541 endpoint).
-
-### Strict (default)
-
-```go
-opts.StrictCapability = true
-```
-
-- Command word tidak ada di registry → `ErrUnknownCommand`
-- Arg tidak ada di Command.Args → `ErrUnknownArg`
-- Class mismatch (mis. `.Exec()` di path streaming) → `ErrInvalidClass`
-
-Semua return error Go sebelum sentence dikirim ke router.
-
-### Warn
-
-```go
-opts.StrictCapability = false
-```
-
-Validator log-warn lewat `device.Logger()` lalu **tetap kirim** sentence. Berguna kalau punya router versi non-7.x atau path eksperimental.
-
-### Override registry
-
-Untuk versi RouterOS lain (mis. v6 atau v7.21 dengan command baru):
-
-```go
-import "github.com/quiqxiq/roslib/capability"
-
-// File path
-reg, err := capability.Load(capability.LoadOptions{Path: "routeros_6.49.json"})
-opts.Registry = reg
-
-// Inline bytes
-reg, err = capability.Load(capability.LoadOptions{Bytes: myJSONBytes})
-opts.Registry = reg
-
-// Disable validasi total
-opts.Registry = nil
-```
-
-Format JSON sama dengan `capability/assets/mikrotik/routeros_7.20.8.json` — tree `_type=path/dir/cmd/arg`.
-
----
-
 ## Auto-reconnect & lifecycle
 
 Setiap koneksi punya supervisor goroutine yang baca `<-chan error` dari `AsyncContext`. Kalau channel emit error (TCP putus, `!fatal`, dst):
@@ -854,8 +787,7 @@ Registry yang di-embed adalah v7.20.8. Beberapa path berbeda di v6:
 
 Mitigasi:
 
-1. **`StrictCapability=false`** — terima semua sentence; router yang validate.
-2. **Custom registry** dari JSON v6 (kalau punya).
-3. **Mayoritas path stabil** — `/ip/address/*`, `/interface/*`, `/system/resource`, `/log`, dst sama di v6/v7.
+1. Library tidak lagi validate sentence — router yang reject command versi-spesifik (~5ms RTT extra).
+2. **Mayoritas path stabil** — `/ip/address/*`, `/interface/*`, `/system/resource`, `/log`, dst sama di v6/v7.
 
 Lihat detail di [docs/integration-report.md](integration-report.md).
