@@ -14,6 +14,7 @@ type PPPSecretResponse struct {
 	Profile    string `json:"profile,omitempty"`
 	LocalAddr  string `json:"local_address,omitempty"`
 	RemoteAddr string `json:"remote_address,omitempty"`
+	CallerID   string `json:"caller_id,omitempty"`
 	Disabled   bool   `json:"disabled"`
 	Comment    string `json:"comment,omitempty"`
 	// Password sengaja tidak di-expose.
@@ -23,7 +24,7 @@ func FromDomainPPPSecret(s domain.PPPSecret) PPPSecretResponse {
 	return PPPSecretResponse{
 		ID: s.ID, Name: s.Name, Service: s.Service, Profile: s.Profile,
 		LocalAddr: s.LocalAddr, RemoteAddr: s.RemoteAddr,
-		Disabled: s.Disabled, Comment: s.Comment,
+		CallerID: s.CallerID, Disabled: s.Disabled, Comment: s.Comment,
 	}
 }
 
@@ -42,6 +43,7 @@ type PPPSecretCreateRequest struct {
 	Profile    string `json:"profile,omitempty"`
 	LocalAddr  string `json:"local_address,omitempty"`
 	RemoteAddr string `json:"remote_address,omitempty"`
+	CallerID   string `json:"caller_id,omitempty"`
 	Disabled   *bool  `json:"disabled,omitempty"`
 	Comment    string `json:"comment,omitempty"`
 }
@@ -50,7 +52,7 @@ func (r PPPSecretCreateRequest) ToArgs() ppp.SecretAddArgs {
 	return ppp.SecretAddArgs{
 		Name: r.Name, Password: r.Password, Service: r.Service, Profile: r.Profile,
 		LocalAddr: r.LocalAddr, RemoteAddr: r.RemoteAddr,
-		Disabled: r.Disabled, Comment: r.Comment,
+		CallerID: r.CallerID, Disabled: r.Disabled, Comment: r.Comment,
 	}
 }
 
@@ -61,6 +63,7 @@ type PPPSecretUpdateRequest struct {
 	Profile    string  `json:"profile,omitempty"`
 	LocalAddr  string  `json:"local_address,omitempty"`
 	RemoteAddr string  `json:"remote_address,omitempty"`
+	CallerID   *string `json:"caller_id,omitempty"`
 	Disabled   *bool   `json:"disabled,omitempty"`
 	Comment    *string `json:"comment,omitempty"`
 }
@@ -69,7 +72,7 @@ func (r PPPSecretUpdateRequest) ToArgs(id string) ppp.SecretSetArgs {
 	return ppp.SecretSetArgs{
 		ID: id, Name: r.Name, Password: r.Password, Service: r.Service, Profile: r.Profile,
 		LocalAddr: r.LocalAddr, RemoteAddr: r.RemoteAddr,
-		Disabled: r.Disabled, Comment: r.Comment,
+		CallerID: r.CallerID, Disabled: r.Disabled, Comment: r.Comment,
 	}
 }
 

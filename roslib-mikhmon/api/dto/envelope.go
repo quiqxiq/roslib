@@ -40,3 +40,19 @@ func Err(code, msg, path string) Envelope {
 func ErrDetails(code, msg, path string, details any) Envelope {
 	return Envelope{Error: &ErrorPayload{Code: code, Message: msg, Path: path, Details: details}}
 }
+
+// CountResponse dipakai oleh semua count-only endpoint.
+type CountResponse struct {
+	Count int `json:"count"`
+}
+
+// IDResponse dipakai oleh semua create endpoint yang hanya return .id baru.
+type IDResponse struct {
+	ID string `json:"id"`
+}
+
+// ActionResponse dipakai oleh control endpoint (reboot, shutdown).
+type ActionResponse struct {
+	Action string `json:"action"`
+	Status string `json:"status"`
+}

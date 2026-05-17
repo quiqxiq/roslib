@@ -2,6 +2,7 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/quiqxiq/roslib-mikhmon/api/dto"
 	"github.com/quiqxiq/roslib-mikhmon/mikrotik/system"
 )
 
@@ -23,7 +24,7 @@ func (h *SystemControl) Reboot(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"action": "reboot", "status": "issued"})
+	WriteOK(c, dto.ActionResponse{Action: "reboot", Status: "issued"})
 }
 
 func (h *SystemControl) Shutdown(c *gin.Context) {
@@ -31,5 +32,5 @@ func (h *SystemControl) Shutdown(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"action": "shutdown", "status": "issued"})
+	WriteOK(c, dto.ActionResponse{Action: "shutdown", Status: "issued"})
 }

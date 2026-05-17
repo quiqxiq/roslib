@@ -42,6 +42,7 @@ type SecretAddArgs struct {
 	Profile    string
 	LocalAddr  string
 	RemoteAddr string
+	CallerID   string // filter calling station (mis. MAC untuk PPPoE)
 	Disabled   *bool
 	Comment    string
 }
@@ -66,6 +67,9 @@ func (c *Client) SecretAdd(ctx context.Context, a SecretAddArgs) (string, error)
 	}
 	if a.RemoteAddr != "" {
 		pairs = append(pairs, roslib.NewPair("remote-address", a.RemoteAddr))
+	}
+	if a.CallerID != "" {
+		pairs = append(pairs, roslib.NewPair("caller-id", a.CallerID))
 	}
 	if a.Disabled != nil {
 		pairs = append(pairs, roslib.NewPair("disabled", mikrotik.BoolWord(*a.Disabled)))
@@ -92,6 +96,7 @@ type SecretSetArgs struct {
 	Profile    string
 	LocalAddr  string
 	RemoteAddr string
+	CallerID   *string
 	Disabled   *bool
 	Comment    *string
 }
@@ -119,6 +124,9 @@ func (c *Client) SecretSet(ctx context.Context, a SecretSetArgs) error {
 	}
 	if a.RemoteAddr != "" {
 		pairs = append(pairs, roslib.NewPair("remote-address", a.RemoteAddr))
+	}
+	if a.CallerID != nil {
+		pairs = append(pairs, roslib.NewPair("caller-id", *a.CallerID))
 	}
 	if a.Disabled != nil {
 		pairs = append(pairs, roslib.NewPair("disabled", mikrotik.BoolWord(*a.Disabled)))
@@ -157,6 +165,7 @@ func sentenceToSecret(s *roslib.Sentence) domain.PPPSecret {
 		Profile:    s.Get("profile"),
 		LocalAddr:  s.Get("local-address"),
 		RemoteAddr: s.Get("remote-address"),
+		CallerID:   s.Get("caller-id"),
 		Disabled:   s.BoolOr("disabled", false),
 		Comment:    s.Get("comment"),
 	}

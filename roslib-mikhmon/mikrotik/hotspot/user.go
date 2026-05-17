@@ -91,6 +91,8 @@ type UserAddArgs struct {
 	Disabled        *bool
 	LimitUptime     string
 	LimitBytesTotal int64 // 0 = tidak dikirim
+	LimitBytesIn    int64 // 0 = tidak dikirim (per-direction)
+	LimitBytesOut   int64 // 0 = tidak dikirim (per-direction)
 	Comment         string
 }
 
@@ -118,6 +120,12 @@ func (c *Client) UserAdd(ctx context.Context, a UserAddArgs) (string, error) {
 	if a.LimitBytesTotal > 0 {
 		pairs = append(pairs, roslib.NewPair("limit-bytes-total", mikrotik.Itoa(a.LimitBytesTotal)))
 	}
+	if a.LimitBytesIn > 0 {
+		pairs = append(pairs, roslib.NewPair("limit-bytes-in", mikrotik.Itoa(a.LimitBytesIn)))
+	}
+	if a.LimitBytesOut > 0 {
+		pairs = append(pairs, roslib.NewPair("limit-bytes-out", mikrotik.Itoa(a.LimitBytesOut)))
+	}
 	if a.Comment != "" {
 		pairs = append(pairs, roslib.NewPair("comment", a.Comment))
 	}
@@ -142,6 +150,8 @@ type UserSetArgs struct {
 	Disabled        *bool
 	LimitUptime     string
 	LimitBytesTotal *int64 // pointer supaya 0 tidak ambigu dengan unset
+	LimitBytesIn    *int64
+	LimitBytesOut   *int64
 	Comment         *string
 	MACAddress      *string
 }
@@ -172,6 +182,12 @@ func (c *Client) UserSet(ctx context.Context, a UserSetArgs) error {
 	}
 	if a.LimitBytesTotal != nil {
 		pairs = append(pairs, roslib.NewPair("limit-bytes-total", mikrotik.Itoa(*a.LimitBytesTotal)))
+	}
+	if a.LimitBytesIn != nil {
+		pairs = append(pairs, roslib.NewPair("limit-bytes-in", mikrotik.Itoa(*a.LimitBytesIn)))
+	}
+	if a.LimitBytesOut != nil {
+		pairs = append(pairs, roslib.NewPair("limit-bytes-out", mikrotik.Itoa(*a.LimitBytesOut)))
 	}
 	if a.Comment != nil {
 		pairs = append(pairs, roslib.NewPair("comment", *a.Comment))
@@ -256,6 +272,8 @@ func sentenceToUser(s *roslib.Sentence) domain.HotspotUser {
 		MACAddress:      s.Get("mac-address"),
 		LimitUptime:     s.Get("limit-uptime"),
 		LimitBytesTotal: s.IntOr("limit-bytes-total", 0),
+		LimitBytesIn:    s.IntOr("limit-bytes-in", 0),
+		LimitBytesOut:   s.IntOr("limit-bytes-out", 0),
 		BytesIn:         s.IntOr("bytes-in", 0),
 		BytesOut:        s.IntOr("bytes-out", 0),
 		Uptime:          s.Get("uptime"),

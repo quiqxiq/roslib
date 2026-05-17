@@ -67,15 +67,16 @@ type TrafficSnapshot struct {
 //
 // Cross-ref: analisis §1.12 (inferred).
 type PPPSecret struct {
-	ID       string
-	Name     string
-	Password string
-	Service  string
-	Profile  string
-	LocalAddr string
+	ID         string
+	Name       string
+	Password   string
+	Service    string
+	Profile    string
+	LocalAddr  string
 	RemoteAddr string
-	Disabled bool
-	Comment  string
+	CallerID   string // caller-id: filter by calling station (mis. MAC untuk PPPoE)
+	Disabled   bool
+	Comment    string
 }
 
 // PPPProfile = row /ppp/profile/print.

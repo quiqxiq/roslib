@@ -16,6 +16,8 @@ type HotspotUser struct {
 	MACAddress      string
 	LimitUptime     string // format RouterOS: "1h", "1d", dll
 	LimitBytesTotal int64  // 0 = unlimited
+	LimitBytesIn    int64  // limit-bytes-in per-direction (0 = unlimited)
+	LimitBytesOut   int64  // limit-bytes-out per-direction (0 = unlimited)
 
 	// Counters runtime (read-only, di-isi saat list).
 	BytesIn  int64

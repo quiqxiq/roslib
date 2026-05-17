@@ -19,6 +19,8 @@ type HotspotUserResponse struct {
 	MACAddress      string `json:"mac_address,omitempty"`
 	LimitUptime     string `json:"limit_uptime,omitempty"`
 	LimitBytesTotal int64  `json:"limit_bytes_total"`
+	LimitBytesIn    int64  `json:"limit_bytes_in"`
+	LimitBytesOut   int64  `json:"limit_bytes_out"`
 	BytesIn         int64  `json:"bytes_in"`
 	BytesOut        int64  `json:"bytes_out"`
 	Uptime          string `json:"uptime,omitempty"`
@@ -36,6 +38,8 @@ func FromDomainUser(u domain.HotspotUser) HotspotUserResponse {
 		MACAddress:      u.MACAddress,
 		LimitUptime:     u.LimitUptime,
 		LimitBytesTotal: u.LimitBytesTotal,
+		LimitBytesIn:    u.LimitBytesIn,
+		LimitBytesOut:   u.LimitBytesOut,
 		BytesIn:         u.BytesIn,
 		BytesOut:        u.BytesOut,
 		Uptime:          u.Uptime,
@@ -60,6 +64,8 @@ type HotspotUserCreateRequest struct {
 	Disabled        *bool  `json:"disabled,omitempty"`
 	LimitUptime     string `json:"limit_uptime,omitempty"`
 	LimitBytesTotal int64  `json:"limit_bytes_total,omitempty" binding:"gte=0"`
+	LimitBytesIn    int64  `json:"limit_bytes_in,omitempty"    binding:"gte=0"`
+	LimitBytesOut   int64  `json:"limit_bytes_out,omitempty"   binding:"gte=0"`
 	Comment         string `json:"comment,omitempty"`
 }
 
@@ -73,6 +79,8 @@ func (r HotspotUserCreateRequest) ToArgs() hotspot.UserAddArgs {
 		Disabled:        r.Disabled,
 		LimitUptime:     r.LimitUptime,
 		LimitBytesTotal: r.LimitBytesTotal,
+		LimitBytesIn:    r.LimitBytesIn,
+		LimitBytesOut:   r.LimitBytesOut,
 		Comment:         r.Comment,
 	}
 }
@@ -87,6 +95,8 @@ type HotspotUserUpdateRequest struct {
 	Disabled        *bool   `json:"disabled,omitempty"`
 	LimitUptime     string  `json:"limit_uptime,omitempty"`
 	LimitBytesTotal *int64  `json:"limit_bytes_total,omitempty"`
+	LimitBytesIn    *int64  `json:"limit_bytes_in,omitempty"`
+	LimitBytesOut   *int64  `json:"limit_bytes_out,omitempty"`
 	Comment         *string `json:"comment,omitempty"`
 	MACAddress      *string `json:"mac_address,omitempty"`
 }
@@ -102,6 +112,8 @@ func (r HotspotUserUpdateRequest) ToArgs(id string) hotspot.UserSetArgs {
 		Disabled:        r.Disabled,
 		LimitUptime:     r.LimitUptime,
 		LimitBytesTotal: r.LimitBytesTotal,
+		LimitBytesIn:    r.LimitBytesIn,
+		LimitBytesOut:   r.LimitBytesOut,
 		Comment:         r.Comment,
 		MACAddress:      r.MACAddress,
 	}
