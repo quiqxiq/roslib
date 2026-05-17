@@ -27,6 +27,7 @@ func (d *RouterDevice) superviseCommand() {
 				return
 			}
 			d.log.WithError(err).Warn("connCommand died, reconnecting")
+			d.notifyStatus("error", err.Error())
 			if rerr := d.reconnectCommand(); rerr != nil {
 				d.log.WithError(rerr).Error("connCommand reconnect aborted")
 				return
@@ -81,6 +82,7 @@ func (d *RouterDevice) reconnectCommand() error {
 
 		d.polls.AttachConn(res.conn)
 		d.log.Info("connCommand reconnected")
+		d.notifyStatus("connected", "")
 		return nil
 	}
 	return backoff.Retry(op, backoff.WithContext(bo, d.ctx))

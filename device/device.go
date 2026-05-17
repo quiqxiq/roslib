@@ -75,8 +75,15 @@ func New(parent context.Context, opts Options) (*RouterDevice, error) {
 
 // Close menutup kedua koneksi, menghentikan StreamManager + PollEngine,
 // dan membatalkan semua context. Aman dipanggil berkali-kali.
+func (d *RouterDevice) notifyStatus(status, errMsg string) {
+	if d.opts.OnStatusChange != nil {
+		d.opts.OnStatusChange(status, errMsg)
+	}
+}
+
 func (d *RouterDevice) Close() error {
 	d.closeOnce.Do(func() {
+		d.notifyStatus("closed", "")
 		d.cancel()
 		if d.streams != nil {
 			d.streams.Close()

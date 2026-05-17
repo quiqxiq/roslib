@@ -71,8 +71,12 @@ func (p *PrintBuilder) Proplist(fields ...string) *PrintBuilder {
 }
 
 // Count menambahkan flag "count-only" — RouterOS hanya kirim jumlah baris.
+// Encoding pakai pair-form "=count-only=" karena RouterOS API mengabaikan
+// bare-word "count-only" (verifikasi terhadap RouterOS 6.49.11 dan 7.20.8:
+// bare form return semua row seperti print biasa, pair form return !done
+// =ret=N).
 func (p *PrintBuilder) Count() *PrintBuilder {
-	p.flags = append(p.flags, "count-only")
+	p.flags = append(p.flags, "=count-only=")
 	return p
 }
 

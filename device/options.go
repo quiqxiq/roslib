@@ -53,6 +53,12 @@ type Options struct {
 
 	// CacheTTL default untuk ExecCached saat caller pakai TTL 0.
 	CacheTTL time.Duration
+
+	// OnStatusChange dipanggil setiap kali status koneksi berubah.
+	// status: "connected" | "error" | "closed"
+	// errMsg: kosong jika status bukan "error"
+	// Nil = no-op. Dipanggil dari goroutine supervisor — implementasi harus goroutine-safe.
+	OnStatusChange func(status, errMsg string)
 }
 
 func (o *Options) listenQueueSize() int {
