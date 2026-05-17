@@ -67,7 +67,7 @@ func (h *HotspotUser) Count(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *HotspotUser) Get(c *gin.Context) {
@@ -99,7 +99,7 @@ func (h *HotspotUser) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *HotspotUser) Update(c *gin.Context) {

@@ -44,7 +44,7 @@ func (h *SystemScheduler) Count(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *SystemScheduler) Create(c *gin.Context) {
@@ -58,7 +58,7 @@ func (h *SystemScheduler) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *SystemScheduler) Update(c *gin.Context) {

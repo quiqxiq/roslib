@@ -42,7 +42,7 @@ func (h *NetworkDHCP) Count(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *NetworkDHCP) Delete(c *gin.Context) {

@@ -172,38 +172,38 @@ func (s *Stream) QueueStats(c *gin.Context) {
 // faithful ke event-source semantic.
 
 func sentenceToActiveMap(s *roslib.Sentence) any {
-	return gin.H{
-		"id":          s.Get(".id"),
-		"user":        s.Get("user"),
-		"address":     s.Get("address"),
-		"mac_address": s.Get("mac-address"),
-		"server":      s.Get("server"),
-		"login_by":    s.Get("login-by"),
-		"uptime":      s.Get("uptime"),
-		"bytes_in":    s.IntOr("bytes-in", 0),
-		"bytes_out":   s.IntOr("bytes-out", 0),
-		"dead":        s.Get(".dead") == "true",
+	return dto.HotspotActiveEvent{
+		ID:         s.Get(".id"),
+		User:       s.Get("user"),
+		Address:    s.Get("address"),
+		MACAddress: s.Get("mac-address"),
+		Server:     s.Get("server"),
+		LoginBy:    s.Get("login-by"),
+		BytesIn:    s.IntOr("bytes-in", 0),
+		BytesOut:   s.IntOr("bytes-out", 0),
+		Uptime:     s.Get("uptime"),
+		Dead:       s.Get(".dead") == "true",
 	}
 }
 
 func sentenceToPPPActiveMap(s *roslib.Sentence) any {
-	return gin.H{
-		"id":        s.Get(".id"),
-		"name":      s.Get("name"),
-		"service":   s.Get("service"),
-		"caller_id": s.Get("caller-id"),
-		"address":   s.Get("address"),
-		"uptime":    s.Get("uptime"),
-		"dead":      s.Get(".dead") == "true",
+	return dto.PPPActiveEvent{
+		ID:       s.Get(".id"),
+		Name:     s.Get("name"),
+		Service:  s.Get("service"),
+		CallerID: s.Get("caller-id"),
+		Address:  s.Get("address"),
+		Uptime:   s.Get("uptime"),
+		Dead:     s.Get(".dead") == "true",
 	}
 }
 
 func sentenceToLogMap(s *roslib.Sentence) any {
-	return gin.H{
-		"id":      s.Get(".id"),
-		"time":    s.Get("time"),
-		"topics":  s.Get("topics"),
-		"message": s.Get("message"),
+	return dto.LogEvent{
+		ID:      s.Get(".id"),
+		Time:    s.Get("time"),
+		Topics:  s.Get("topics"),
+		Message: s.Get("message"),
 	}
 }
 
@@ -232,28 +232,28 @@ func sentenceToTrafficMap(s *roslib.Sentence) any {
 }
 
 func sentenceToInterfaceMap(s *roslib.Sentence) any {
-	return gin.H{
-		"id":         s.Get(".id"),
-		"name":       s.Get("name"),
-		"type":       s.Get("type"),
-		"rx_byte":    s.IntOr("rx-byte", 0),
-		"tx_byte":    s.IntOr("tx-byte", 0),
-		"rx_packet":  s.IntOr("rx-packet", 0),
-		"tx_packet":  s.IntOr("tx-packet", 0),
-		"running":    s.BoolOr("running", false),
-		"disabled":   s.BoolOr("disabled", false),
+	return dto.InterfaceStatsEvent{
+		ID:       s.Get(".id"),
+		Name:     s.Get("name"),
+		Type:     s.Get("type"),
+		RxByte:   s.IntOr("rx-byte", 0),
+		TxByte:   s.IntOr("tx-byte", 0),
+		RxPacket: s.IntOr("rx-packet", 0),
+		TxPacket: s.IntOr("tx-packet", 0),
+		Running:  s.BoolOr("running", false),
+		Disabled: s.BoolOr("disabled", false),
 	}
 }
 
 func sentenceToQueueMap(s *roslib.Sentence) any {
-	return gin.H{
-		"id":       s.Get(".id"),
-		"name":     s.Get("name"),
-		"target":   s.Get("target"),
-		"bytes":    s.Get("bytes"),
-		"packets":  s.Get("packets"),
-		"rate":     s.Get("rate"),
-		"max_limit": s.Get("max-limit"),
+	return dto.QueueStatsEvent{
+		ID:       s.Get(".id"),
+		Name:     s.Get("name"),
+		Target:   s.Get("target"),
+		Bytes:    s.Get("bytes"),
+		Packets:  s.Get("packets"),
+		Rate:     s.Get("rate"),
+		MaxLimit: s.Get("max-limit"),
 	}
 }
 

@@ -42,7 +42,7 @@ func (h *HotspotCookie) Count(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *HotspotCookie) Delete(c *gin.Context) {

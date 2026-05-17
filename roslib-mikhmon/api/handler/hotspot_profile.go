@@ -80,7 +80,7 @@ func (h *HotspotProfile) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *HotspotProfile) Update(c *gin.Context) {

@@ -65,7 +65,7 @@ func (h *SystemScript) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *SystemScript) Update(c *gin.Context) {

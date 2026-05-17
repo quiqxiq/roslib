@@ -51,7 +51,7 @@ func (h *PPPSecret) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *PPPSecret) Update(c *gin.Context) {

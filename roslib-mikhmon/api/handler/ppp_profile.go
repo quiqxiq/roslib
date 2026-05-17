@@ -50,7 +50,7 @@ func (h *PPPProfile) Create(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteCreated(c, gin.H{"id": id})
+	WriteCreated(c, dto.IDResponse{ID: id})
 }
 
 func (h *PPPProfile) Update(c *gin.Context) {

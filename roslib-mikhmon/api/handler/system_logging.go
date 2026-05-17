@@ -22,7 +22,7 @@ func (h *SystemLogging) ByPrefix(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *SystemLogging) AddHotspotDisk(c *gin.Context) {

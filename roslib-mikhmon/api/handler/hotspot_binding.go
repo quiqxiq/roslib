@@ -46,7 +46,7 @@ func (h *HotspotBinding) Count(c *gin.Context) {
 		WriteErr(c, err)
 		return
 	}
-	WriteOK(c, gin.H{"count": n})
+	WriteOK(c, dto.CountResponse{Count: n})
 }
 
 func (h *HotspotBinding) Get(c *gin.Context) {
