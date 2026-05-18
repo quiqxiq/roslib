@@ -34,6 +34,11 @@ type RouterDevice struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// supervisorWG melacak supervisor goroutines agar CloseAndWait dapat
+	// memastikan tidak ada goroutine yang masih emit OnStatusChange
+	// callback setelah caller pikir device sudah benar-benar di-tutup.
+	supervisorWG sync.WaitGroup
+
 	closeOnce sync.Once
 }
 
@@ -66,8 +71,15 @@ func New(parent context.Context, opts Options) (*RouterDevice, error) {
 	d.streams = stream.NewManager(ctx, d.log, d.connStream)
 	d.polls = poll.NewEngine(ctx, d.log, d.connCommand)
 
-	go d.superviseStream()
-	go d.superviseCommand()
+	d.supervisorWG.Add(2)
+	go func() {
+		defer d.supervisorWG.Done()
+		d.superviseStream()
+	}()
+	go func() {
+		defer d.supervisorWG.Done()
+		d.superviseCommand()
+	}()
 
 	d.log.Info("router device ready")
 	return d, nil
@@ -82,26 +94,42 @@ func (d *RouterDevice) notifyStatus(status, errMsg string) {
 }
 
 func (d *RouterDevice) Close() error {
-	d.closeOnce.Do(func() {
-		d.notifyStatus("closed", "")
-		d.cancel()
-		if d.streams != nil {
-			d.streams.Close()
-		}
-		if d.polls != nil {
-			d.polls.Close()
-		}
-		d.mu.Lock()
-		if d.connStream != nil {
-			_ = d.connStream.Close()
-		}
-		if d.connCommand != nil {
-			_ = d.connCommand.Close()
-		}
-		d.mu.Unlock()
-		d.log.Info("router device closed")
-	})
+	d.closeOnce.Do(d.shutdown)
 	return nil
+}
+
+// CloseAndWait sama dengan Close, lalu menunggu semua supervisor
+// goroutine benar-benar exit sebelum return. Dipakai caller yang akan
+// segera membuat Device baru dengan address/credentials yang sama
+// (mis. reconfigure dari UI) — mencegah race di mana supervisor lama
+// masih emit OnStatusChange ke handler baru.
+//
+// Idempotent (boleh dipanggil setelah Close); pemanggilan kedua hanya
+// tunggu WaitGroup (no-op kalau sudah zero).
+func (d *RouterDevice) CloseAndWait() error {
+	d.closeOnce.Do(d.shutdown)
+	d.supervisorWG.Wait()
+	return nil
+}
+
+func (d *RouterDevice) shutdown() {
+	d.notifyStatus("closed", "")
+	d.cancel()
+	if d.streams != nil {
+		d.streams.Close()
+	}
+	if d.polls != nil {
+		d.polls.Close()
+	}
+	d.mu.Lock()
+	if d.connStream != nil {
+		_ = d.connStream.Close()
+	}
+	if d.connCommand != nil {
+		_ = d.connCommand.Close()
+	}
+	d.mu.Unlock()
+	d.log.Info("router device closed")
 }
 
 // IsAlive melaporkan apakah device masih aktif: context belum cancel
